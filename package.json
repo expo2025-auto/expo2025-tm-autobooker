@@ -1,0 +1,16 @@
+{
+  "name": "expo2025-tm-autobooker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tampermonkey userscript: Expo2025 自動新規予約。GitHub で管理し、ビルド時に @updateURL/@downloadURL を自動注入。",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nagi-Inaba/expo2025-tm-autobooker.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "version": "node scripts/build.js && git add -A dist"
+  },
+  "devDependencies": {}
+}

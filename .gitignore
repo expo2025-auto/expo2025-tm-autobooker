@@ -1,0 +1,6 @@
+node_modules
+.DS_Store
+*.log
+.env
+# keep dist committed (for Tampermonkey auto-update)
+# !dist
