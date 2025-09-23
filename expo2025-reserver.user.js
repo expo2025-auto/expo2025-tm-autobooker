@@ -464,12 +464,12 @@ function scheduleRetryOrNextMinute(){
   const sec=secondsInMinute();
   if(sec<53){
     if(state.r){
-      ui.setStatus('即再読込（<53s）');
+      ui.setStatus('再試行中');
       safeReload();
     }
   }else{
     const d=delayUntilNextMinute_43s();
-    ui.setStatus('次: →43s (+'+(Math.round(d/100)/10)+'s)');
+    ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
   }
@@ -477,7 +477,7 @@ function scheduleRetryOrNextMinute(){
 
 /* ========= UI ========= */
 let Tm=null,Clk=null;
-const ui=(()=>{const w=document.createElement('div');Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};const rTop=row();const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;rTop.appendChild(title);rTop.appendChild(tg);const rTime=row(6);const labT=document.createElement('label');labT.textContent='SERVER';labT.style.width='58px';labT.style.fontSize='12px';const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='--:--:--';rTime.appendChild(labT);rTime.appendChild(tm);const rDates=row();const labD=document.createElement('label');labD.textContent='対象日';labD.style.width='58px';labD.style.fontSize='12px';const addWrap=document.createElement('div');Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});const din=document.createElement('input');din.type='date';din.style.flex='1';const add=document.createElement('button');add.textContent='追加';Object.assign(add.style,{padding:'4px 8px'});addWrap.appendChild(din);addWrap.appendChild(add);rDates.appendChild(labD);rDates.appendChild(addWrap);const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.r?'稼働中':'停止中';w.appendChild(rTop);w.appendChild(rTime);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);document.body.appendChild(w);function setClock(s){tm.textContent=s}function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())}function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}renderChips();add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}state.r=true;Sset(STATE_KEY,state);stat.textContent='稼働中';runCycle()}else{state.r=false;Sset(STATE_KEY,state);stat.textContent='停止中';clearTimeout(Tm)}});function setStatus(x){stat.textContent=x}function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}stat.textContent='停止中'};(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{setClock(fmtClock(serverNow()))},250)})().catch(()=>{});return{setStatus,uncheck}})();
+const ui=(()=>{const w=document.createElement('div');Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};const rTop=row();const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;rTop.appendChild(title);rTop.appendChild(tg);const rTime=row(6);const labT=document.createElement('label');labT.textContent='現在時刻';labT.style.width='58px';labT.style.fontSize='12px';const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='---- --:--';rTime.appendChild(labT);rTime.appendChild(tm);const rDates=row();const labD=document.createElement('label');labD.textContent='対象日';labD.style.width='58px';labD.style.fontSize='12px';const addWrap=document.createElement('div');Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});const din=document.createElement('input');din.type='date';din.style.flex='1';const add=document.createElement('button');add.textContent='追加';Object.assign(add.style,{padding:'4px 8px'});addWrap.appendChild(din);addWrap.appendChild(add);rDates.appendChild(labD);rDates.appendChild(addWrap);const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.r?'稼働中':'停止中';w.appendChild(rTop);w.appendChild(rTime);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);document.body.appendChild(w);function setClock(s){tm.textContent=s}function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}renderChips();add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}state.r=true;Sset(STATE_KEY,state);stat.textContent='稼働中';runCycle()}else{state.r=false;Sset(STATE_KEY,state);stat.textContent='停止中';clearTimeout(Tm)}});function setStatus(x){stat.textContent=x}function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}stat.textContent='停止中'};(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{setClock(fmtClock(serverNow()))},250)})().catch(()=>{});return{setStatus,uncheck}})();
 
 /* ========= メイン ========= */
 function stopOK(){try{clearTimeout(Tm)}catch{}state.r=false;Sset(STATE_KEY,state);ui.uncheck()}
@@ -491,7 +491,7 @@ async function runCycle(){
   const sec=secondsInMinute();
   if(sec<43){
     const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機: →43s (+'+(Math.round(d/100)/10)+'s)');
+    ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
@@ -499,14 +499,16 @@ async function runCycle(){
 
   if(sec>=53){
     const d=delayUntilNextMinute_43s();
-    ui.setStatus('枠外: →43s (+'+(Math.round(d/100)/10)+'s)');
+    ui.setStatus('再試行中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
   }
 
+  ui.setStatus('空き枠探索中');
+
   const calOK=await waitCalendarReady(5000);
-  if(!calOK){ui.setStatus('カレンダー未描画 → 即再読込');return scheduleRetryOrNextMinute()}
+  if(!calOK){ui.setStatus('再試行中');return scheduleRetryOrNextMinute()}
 
   // まず今見えている月で選択可否
   let anySelectable=false;
@@ -529,20 +531,21 @@ async function runCycle(){
   }
 
   if(!anySelectable){
-    ui.setStatus('選択不可（9月→10月確認済）: 即再読込');
+    ui.setStatus('再試行中');
     return scheduleRetryOrNextMinute();
   }
 
   // 予約試行
   for(const ds of conf.dates){
+    ui.setStatus('予約試行中');
     const d=new Date(ds+'T00:00:00');
     const r=await tryOnceForDate(d);
     if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
-    if(r==='ng'){ui.setStatus('押し負け→継続');break}
+    if(r==='ng'){ui.setStatus('再試行中');break}
   }
 
   const d=delayUntilNextMinute_43s();
-  ui.setStatus('次: →43s (+'+(Math.round(d/100)/10)+'s)');
+  ui.setStatus('待機中');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
 }
