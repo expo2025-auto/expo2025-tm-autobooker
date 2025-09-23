@@ -2,7 +2,6 @@
 // @name         V2 Expo2025 新規予約オート（イベント駆動/43秒開始/53秒上限/タブ独立/デフォルトOFF）
 // @namespace    http://tampermonkey.net/
 // @version      2025-09-23
-// @description  可視/活性監視→即クリック。毎分43秒に開始、選択不可は53秒まで即リロードで粘る。失敗時は保険の強制リロード（最大3回）。UI：複数日/サーバ時刻表示/日付ロック/有効化待ち対応。タブごとにON/OFF独立。デフォルトOFF。10月指定時は必要に応じて次月ページめくり（JSパス優先 & ハードクリック）。
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
