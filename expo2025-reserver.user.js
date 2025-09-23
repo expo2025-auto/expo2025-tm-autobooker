@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         V2 Expo2025 新規予約オート（イベント駆動/43秒開始/53秒上限/タブ独立/デフォルトOFF）
+// @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      2025-09-23
+// @version      1.0
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
