@@ -45,8 +45,16 @@ function safeReload(){
 
 /* ========= 設定/状態 ========= */
 let conf=Object.assign({dates:[]},Lget(CONF_KEY));
-let state=Sget(STATE_KEY);
-if(typeof state.r!=='boolean'){state={r:false};Sset(STATE_KEY,state)}
+let stateRaw=Sget(STATE_KEY);
+if(typeof stateRaw!=='object'||!stateRaw){stateRaw={}};
+let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:''},stateRaw);
+if(typeof state.r!=='boolean')state.r=false;
+if(typeof state.keepAlive!=='boolean')state.keepAlive=false;
+if(typeof state.switchEnabled!=='boolean')state.switchEnabled=false;
+if(typeof state.switchTime!=='string')state.switchTime='';
+if(state.keepAlive&&state.r)state.r=false;
+Sset(STATE_KEY,state);
+function saveState(){Sset(STATE_KEY,state)}
 ;(function migrateOld(){
   try{
     const old=Lget(CONF_KEY);
@@ -60,6 +68,72 @@ if(typeof state.r!=='boolean'){state={r:false};Sset(STATE_KEY,state)}
     }
   }catch{}
 })();
+
+let ui=null;
+let AutoToggleEl=null,KeepAliveToggleEl=null,SwitchCheckEl=null,SwitchTimeInputEl=null;
+const KEEP_ALIVE_INTERVAL_MS=5*60*1000;
+let KeepAliveTimer=null;
+let keepAliveSwitching=false;
+function setUIStatus(msg){try{if(ui&&typeof ui.setStatus==='function')ui.setStatus(msg)}catch{}}
+function keepAliveStatusText(){return state.switchEnabled&&state.keepAlive?'ログイン維持リロード待機中（切替待ち）':'ログイン維持リロード待機中'}
+function clearKeepAliveTimer(){if(KeepAliveTimer){clearTimeout(KeepAliveTimer);KeepAliveTimer=null}}
+function scheduleKeepAliveReload(){clearKeepAliveTimer();if(!state.keepAlive)return;KeepAliveTimer=setTimeout(()=>{if(!state.keepAlive)return;setUIStatus('ログイン維持リロード実行');safeReload()},KEEP_ALIVE_INTERVAL_MS)}
+function triggerSwitchToBooking(){
+  if(keepAliveSwitching)return;
+  keepAliveSwitching=true;
+  setUIStatus('指定時刻になりました。予約モードに切替中...');
+  let updated=false;
+  if(SwitchCheckEl){
+    if(SwitchCheckEl.checked){
+      SwitchCheckEl.checked=false;
+      SwitchCheckEl.dispatchEvent(new Event('change',{bubbles:true}));
+      updated=true;
+    }
+  }
+  if(!updated&&state.switchEnabled){state.switchEnabled=false;saveState()}
+  if(KeepAliveToggleEl){
+    if(KeepAliveToggleEl.checked){
+      KeepAliveToggleEl.checked=false;
+      KeepAliveToggleEl.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+  }
+  if(state.keepAlive){
+    state.keepAlive=false;
+    saveState();
+    clearKeepAliveTimer();
+  }
+  if(conf.dates.length===0){
+    setUIStatus('日付を追加してください');
+    if(AutoToggleEl)AutoToggleEl.checked=false;
+    state.r=false;
+    saveState();
+    keepAliveSwitching=false;
+    return;
+  }
+  if(AutoToggleEl){
+    AutoToggleEl.checked=true;
+    AutoToggleEl.dispatchEvent(new Event('change',{bubbles:true}));
+  }else{
+    state.r=true;
+    saveState();
+    runCycle();
+  }
+  keepAliveSwitching=false;
+}
+function checkAutoSwitch(now){
+  if(!state.keepAlive||!state.switchEnabled||keepAliveSwitching)return;
+  const t=state.switchTime;
+  if(!t||typeof t!=='string')return;
+  const m=t.match(/^(\d{1,2}):(\d{2})$/);
+  if(!m)return;
+  const hh=Number(m[1]);
+  const mm=Number(m[2]);
+  if(Number.isNaN(hh)||Number.isNaN(mm))return;
+  const base=now instanceof Date?now:serverNow();
+  const target=new Date(base.getTime());
+  target.setHours(hh,mm,0,0);
+  if(base.getTime()>=target.getTime())triggerSwitchToBooking();
+}
 
 /* ========= セレクタ ========= */
 const SEL_SUCC='h2#reservation_modal_title',SEL_FAIL='h2#reservation_fail_modal_title';
@@ -477,15 +551,73 @@ function scheduleRetryOrNextMinute(){
 
 /* ========= UI ========= */
 let Tm=null,Clk=null;
-const ui=(()=>{const w=document.createElement('div');Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};const rTop=row();const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;rTop.appendChild(title);rTop.appendChild(tg);const rTime=row(6);const labT=document.createElement('label');labT.textContent='現在時刻';labT.style.width='58px';labT.style.fontSize='12px';const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='---- --:--';rTime.appendChild(labT);rTime.appendChild(tm);const rDates=row();const labD=document.createElement('label');labD.textContent='対象日';labD.style.width='58px';labD.style.fontSize='12px';const addWrap=document.createElement('div');Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});const din=document.createElement('input');din.type='date';din.style.flex='1';const add=document.createElement('button');add.textContent='追加';Object.assign(add.style,{padding:'4px 8px'});addWrap.appendChild(din);addWrap.appendChild(add);rDates.appendChild(labD);rDates.appendChild(addWrap);const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.r?'稼働中':'停止中';w.appendChild(rTop);w.appendChild(rTime);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);document.body.appendChild(w);function setClock(s){tm.textContent=s}function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}renderChips();add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}state.r=true;Sset(STATE_KEY,state);stat.textContent='稼働中';runCycle()}else{state.r=false;Sset(STATE_KEY,state);stat.textContent='停止中';clearTimeout(Tm)}});function setStatus(x){stat.textContent=x}function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}stat.textContent='停止中'};(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{setClock(fmtClock(serverNow()))},250)})().catch(()=>{});return{setStatus,uncheck}})();
+ui=(()=>{const w=document.createElement('div');
+Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});
+const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};
+const rTop=row();
+const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';
+const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;
+rTop.appendChild(title);rTop.appendChild(tg);
+const keepRow=row();
+const keepLabel=document.createElement('div');keepLabel.textContent='ログイン維持用リロードON・OFF';keepLabel.style.fontSize='12px';keepLabel.style.flex='1';
+const keepToggle=document.createElement('input');keepToggle.type='checkbox';keepToggle.checked=!!state.keepAlive;keepToggle.style.marginLeft='auto';
+keepRow.appendChild(keepLabel);keepRow.appendChild(keepToggle);
+const switchRow=row();
+const switchLabel=document.createElement('label');switchLabel.textContent='切替時刻';switchLabel.style.width='58px';switchLabel.style.fontSize='12px';
+const switchWrap=document.createElement('div');Object.assign(switchWrap.style,{display:'flex',gap:'6px',flex:'1',alignItems:'center'});
+const timeInput=document.createElement('input');timeInput.type='time';timeInput.step='60';timeInput.style.flex='1';timeInput.value=state.switchTime||'';
+const switchLabelBox=document.createElement('label');Object.assign(switchLabelBox.style,{display:'flex',alignItems:'center',gap:'4px'});
+const switchCheck=document.createElement('input');switchCheck.type='checkbox';switchCheck.checked=!!state.switchEnabled;
+const switchText=document.createElement('span');switchText.textContent='指定時間で予約開始';switchText.style.fontSize='12px';
+switchLabelBox.appendChild(switchCheck);switchLabelBox.appendChild(switchText);
+switchWrap.appendChild(timeInput);switchWrap.appendChild(switchLabelBox);
+switchRow.appendChild(switchLabel);switchRow.appendChild(switchWrap);
+const rTime=row(6);
+const labT=document.createElement('label');labT.textContent='現在時刻';labT.style.width='58px';labT.style.fontSize='12px';
+const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='---- --:--';
+rTime.appendChild(labT);rTime.appendChild(tm);
+const rDates=row();
+const labD=document.createElement('label');labD.textContent='対象日';labD.style.width='58px';labD.style.fontSize='12px';
+const addWrap=document.createElement('div');Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});
+const din=document.createElement('input');din.type='date';din.style.flex='1';
+const add=document.createElement('button');add.textContent='追加';Object.assign(add.style,{padding:'4px 8px'});
+addWrap.appendChild(din);addWrap.appendChild(add);
+rDates.appendChild(labD);rDates.appendChild(addWrap);
+const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});
+const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.keepAlive?keepAliveStatusText():(state.r?'稼働中':'停止中');
+w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);
+document.body.appendChild(w);
+AutoToggleEl=tg;KeepAliveToggleEl=keepToggle;SwitchCheckEl=switchCheck;SwitchTimeInputEl=timeInput;
+function setClock(s){tm.textContent=s}
+function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
+function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
+renderChips();
+add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
+tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(switchCheck.checked)switchCheck.checked=false;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';}});
+switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{if(state.switchEnabled){state.switchEnabled=false;saveState();}if(state.keepAlive)stat.textContent=keepAliveStatusText();}});
+timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();try{checkAutoSwitch(serverNow())}catch{}}});
+function setStatus(x){stat.textContent=x}
+function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}stat.textContent=state.keepAlive?keepAliveStatusText():'停止中'}
+(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{const now=serverNow();setClock(fmtClock(now));checkAutoSwitch(now)},250);checkAutoSwitch(serverNow())})().catch(()=>{});
+return{setStatus,uncheck}})();
+
+
+
+if(state.keepAlive){
+  setUIStatus(keepAliveStatusText());
+  scheduleKeepAliveReload();
+  try{checkAutoSwitch(serverNow())}catch{}
+}
 
 /* ========= メイン ========= */
-function stopOK(){try{clearTimeout(Tm)}catch{}state.r=false;Sset(STATE_KEY,state);ui.uncheck()}
+function stopOK(){try{clearTimeout(Tm)}catch{}state.r=false;saveState();ui.uncheck()}
 
 async function runCycle(){
   if(Q(SEL_SUCC)){resetFail();stopOK();return}
   if(Q(SEL_FAIL)){return}
   if(!state.r)return;
+  if(state.keepAlive){ui.setStatus(keepAliveStatusText());return;}
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
@@ -550,7 +682,7 @@ async function runCycle(){
   Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
 }
 
-if(state.r)runCycle();
+if(state.r&&!state.keepAlive)runCycle();
 
 /* ========= トレース（reloadは上書きしない） ========= */
 (()=>{ if(window.__nrTrace) return; window.__nrTrace=1;
