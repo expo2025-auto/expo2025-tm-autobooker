@@ -748,5 +748,3 @@ if(state.r&&!state.keepAlive)runCycle();
   mo.observe(root, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style','aria-pressed','aria-hidden']});
   log('trace armed for', iso || '(no iso set)');
 })();
-
-})();
