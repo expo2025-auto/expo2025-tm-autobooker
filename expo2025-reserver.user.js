@@ -266,7 +266,7 @@ async function hardClick(el, tries=3, wait=140){
   try{ el.focus?.({preventScroll:true}) }catch{}
   const rect = el.getBoundingClientRect();
   const cx = Math.max(0, Math.floor(rect.left + rect.width/2));
-  const cy = Math.max(0, Math.floor(rect.top  + rect.height/2));
+  const cy = Math.max(0, Math.floor(rect.top + rect.height/2));
   const fire = (type,target)=>{ try{
     const ev = new MouseEvent(type,{bubbles:true,clientX:cx,clientY:cy});
     target.dispatchEvent(ev);
@@ -385,9 +385,9 @@ function findNextBtn(){
 
 /* --- 置き換え④：描画監視→押す→10月セル/更新待ち→小安定 --- */
 async function showMonthForISO(iso){
-  if(!/-10-/.test(iso)) return true;      // 10月以外は不要
-  await waitCalendarReady(5000);           // まず描画待ち
-  if(getCellByISO(iso)) return true;      // 既に選択対象が表示済み
+  if(!/-10-/.test(iso)) return true;
+  await waitCalendarReady(5000);
+  if(getCellByISO(iso)) return true;
 
   const targetKey = isoToYearMonthKey(iso);
 
