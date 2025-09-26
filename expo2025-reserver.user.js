@@ -8,7 +8,6 @@
 // @grant        none
 // @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/expo2025-reserver.user.js
 // @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/expo2025-reserver.user.js
-// @homepageURL  https://github.com/expo2025-auto/expo2025-tm-autobooker
 // @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
 
