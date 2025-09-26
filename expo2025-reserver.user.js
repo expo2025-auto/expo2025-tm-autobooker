@@ -463,20 +463,6 @@ async function waitEnabled(selOrEl,timeout=10000){
   return await waitUntil(()=>{const e=resEl();return(e&&isEnabled(e))?e:null},{timeout,interval:80,attrs:['class','disabled','aria-disabled','data-disabled']});
 }
 const TYPE_SELECTION_HEADING_SELECTOR='h1.h-type2 span[data-message-code="SW_GP_DL_007_0120"], h1.h-type2 span';
-const TYPE_SELECTION_STOP_MSG='種類・枚数選択ページに移動したため自動停止しました';
-let confirmStopIssued=false;
-
-async function stopAfterTypeSelectionTrigger(timeout=2000){
-  if(confirmStopIssued)return false;
-  confirmStopIssued=true;
-  const hit=await waitTypeSelectionPage(timeout);
-  if(hit){
-    stopOK(TYPE_SELECTION_STOP_MSG);
-    return true;
-  }
-  confirmStopIssued=false;
-  return false;
-}
 function isTypeSelectionPage(){
   const heading=Q(TYPE_SELECTION_HEADING_SELECTOR);
   if(!heading)return false;
@@ -543,13 +529,11 @@ async function flowConfirm(targetISO){
   if(!b||selectedDateISO()!==targetISO)return 'none';
   KC(b);
   clickedButtons.add(b);
-  if(await stopAfterTypeSelectionTrigger(2000))return 'typeSelect';
   if(selectedDateISO()!==targetISO)return 'none';
   const nextBtn=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:8000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   if(nextBtn){
     KC(nextBtn);
     clickedButtons.add(nextBtn);
-    if(await stopAfterTypeSelectionTrigger(4000))return 'typeSelect';
   }
   if(await waitTypeSelectionPage(4000))return 'typeSelect';
   return 'clicked';
@@ -872,7 +856,7 @@ function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+p
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
-  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}confirmStopIssued=false;state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
 keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(switchCheck.checked)switchCheck.checked=false;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
 switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{if(state.switchEnabled){state.switchEnabled=false;saveState();}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
 timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
@@ -895,7 +879,7 @@ if(state.keepAlive){
 function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
 async function runCycle(){
-  if(isTypeSelectionPage()){resetFail();stopOK(TYPE_SELECTION_STOP_MSG);return}
+  if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
   if(Q(SEL_SUCC)){resetFail();stopOK();return}
   if(Q(SEL_FAIL)){return}
   if(!state.r)return;
@@ -962,7 +946,7 @@ async function runCycle(){
     const d=new Date(ds+'T00:00:00');
     const r=await tryOnceForDate(d);
     if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
-    if(r==='typeSelect'){resetFail();stopOK(TYPE_SELECTION_STOP_MSG);return}
+    if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');return}
     if(r==='ng'){ui.setStatus('再試行中');break}
   }
 
