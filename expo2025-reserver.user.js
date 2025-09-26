@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.1.2
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
