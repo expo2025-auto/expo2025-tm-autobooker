@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -466,10 +466,16 @@ const TYPE_SELECTION_HEADING_SELECTOR='h1.h-type2 span[data-message-code="SW_GP_
 const TYPE_SELECTION_STOP_MSG='種類・枚数選択ページに移動したため自動停止しました';
 let confirmStopIssued=false;
 
-function stopAfterTypeSelectionTrigger(){
-  if(confirmStopIssued)return;
+async function stopAfterTypeSelectionTrigger(timeout=2000){
+  if(confirmStopIssued)return false;
   confirmStopIssued=true;
-  stopOK(TYPE_SELECTION_STOP_MSG);
+  const hit=await waitTypeSelectionPage(timeout);
+  if(hit){
+    stopOK(TYPE_SELECTION_STOP_MSG);
+    return true;
+  }
+  confirmStopIssued=false;
+  return false;
 }
 function isTypeSelectionPage(){
   const heading=Q(TYPE_SELECTION_HEADING_SELECTOR);
@@ -491,35 +497,59 @@ async function flowConfirm(targetISO){
     host+' .basic-btn.type2.style_full__ptzZq',
     'button.basic-btn.type2.style_full__ptzZq',
     '#__next main div[class*="style_main__next_button__"] button.basic-btn.type2',
-    'div[class*="style_main__next_button__"] button.basic-btn.type2'
+    'div[class*="style_main__next_button__"] button.basic-btn.type2',
+    '#__next main button[class*="style_main__add_cart_button__"]',
+    '#__next main button[class*="style_main__next_button__"]',
+    '#__next main button[class*="style_next_button__"]'
   ];
-  const findConfirmBtn=()=>{
+  const confirmTextHints=['来場日時を設定する','来場日時を設定','日時を設定','日時設定'];
+  const matchesConfirmText=el=>{
+    const values=[];
+    if(el.textContent)values.push(el.textContent);
+    if(el.innerText&&el.innerText!==el.textContent)values.push(el.innerText);
+    if(el.getAttribute){
+      values.push(el.getAttribute('aria-label')||'');
+      values.push(el.getAttribute('title')||'');
+    }
+    const normalized=values
+      .filter(Boolean)
+      .map(v=>String(v).replace(/\s+/g,''))
+      .join('');
+    if(!normalized)return false;
+    return confirmTextHints.some(h=>normalized.includes(h));
+  };
+  const findConfirmBtn=(exclude=new Set())=>{
     for(const sel of confirmBtnSelectors){
       const candidates=A(sel);
       if(!candidates.length)continue;
       for(const el of candidates){
-        if(isEnabled(el))return el;
+        if(exclude.has(el))continue;
+        if(isEnabled(el)&&vis(el))return el;
       }
+    }
+    const candidates=A('button, [role="button"], a');
+    for(const el of candidates){
+      if(exclude.has(el))continue;
+      if(!isEnabled(el)||!vis(el))continue;
+      if(matchesConfirmText(el))return el;
     }
     return null;
   };
-  let b=findConfirmBtn();
+  const clickedButtons=new Set();
+  let b=findConfirmBtn(clickedButtons);
   if(!b){
-    b=await waitUntil(findConfirmBtn,{timeout:12000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled']});
+    b=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:12000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   }
   if(!b||selectedDateISO()!==targetISO)return 'none';
   KC(b);
-  stopAfterTypeSelectionTrigger();
-  if(await waitTypeSelectionPage(2000))return 'typeSelect';
+  clickedButtons.add(b);
+  if(await stopAfterTypeSelectionTrigger(2000))return 'typeSelect';
   if(selectedDateISO()!==targetISO)return 'none';
-  const confirmSelList=['button.style_next_button__N_pbs','button:has(span.btn-text), a:has(span.btn-text)'];
-  for(const sel of confirmSelList){
-    const c=await waitEnabled(sel,8000);
-    if(c){
-      KC(c);
-      stopAfterTypeSelectionTrigger();
-      break;
-    }
+  const nextBtn=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:8000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
+  if(nextBtn){
+    KC(nextBtn);
+    clickedButtons.add(nextBtn);
+    if(await stopAfterTypeSelectionTrigger(4000))return 'typeSelect';
   }
   if(await waitTypeSelectionPage(4000))return 'typeSelect';
   return 'clicked';
