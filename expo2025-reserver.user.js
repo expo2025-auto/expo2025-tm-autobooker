@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -10,12 +10,16 @@
 // @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/expo2025-reserver.user.js
 // @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
+
 /* ========= ユーティリティ ========= */
 const CONF_KEY='nr_conf_v1',STATE_KEY='nr_state_v1';
+const AUTO_RELOAD_FLAG='nr_auto_reload_v1';
 function Lget(k){try{return JSON.parse(localStorage.getItem(k)||'{}')}catch{return{}}}
 function Lset(k,v){localStorage.setItem(k,JSON.stringify(v))}
 function Sget(k){try{return JSON.parse(sessionStorage.getItem(k)||'{}')}catch{return{}}}
 function Sset(k,v){sessionStorage.setItem(k,JSON.stringify(v))}
+function markAutoReload(){try{sessionStorage.setItem(AUTO_RELOAD_FLAG,Date.now().toString())}catch{}}
+function consumeAutoReloadMark(){try{const v=sessionStorage.getItem(AUTO_RELOAD_FLAG);if(v!==null){sessionStorage.removeItem(AUTO_RELOAD_FLAG);return true}}catch{}return false}
 const Q=(s,r=document)=>r.querySelector(s);
 const A=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const D=e=>!e||e.disabled||(e.getAttribute('aria-disabled')||'').toLowerCase()==='true'||/\bdisabled\b/i.test(e.className||'')||e.getAttribute('data-disabled')==='true'||(()=>{try{return getComputedStyle(e).pointerEvents==='none'}catch{return!1}})();
@@ -25,6 +29,7 @@ function waitUntil(checkFn,{timeout=8000,interval=80,attrs,root=document.body}={
 
 // 安全リロード
 function safeReload(){
+  markAutoReload();
   try{
     console.log('[NR] reload at', new Date().toLocaleTimeString());
     location.reload();
@@ -155,6 +160,8 @@ if(typeof state.switchTime!=='string')state.switchTime='';
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
+const __nrAutoReloaded=consumeAutoReloadMark();
+let ManualReloadKick=state.r&&!state.keepAlive&&!__nrAutoReloaded;
 ;(function migrateOld(){
   try{
     const old=Lget(CONF_KEY);
@@ -945,20 +952,24 @@ async function runCycle(){
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<43){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
-  }
+  const skipTimingGate=ManualReloadKick;
+  if(ManualReloadKick)ManualReloadKick=false;
+  if(!skipTimingGate){
+    if(sec<43){
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('待機中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      return;
+    }
 
-  if(sec>=53){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('再試行中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
+    if(sec>=53){
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('再試行中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      return;
+    }
   }
 
   ui.setStatus('空き枠探索中');
