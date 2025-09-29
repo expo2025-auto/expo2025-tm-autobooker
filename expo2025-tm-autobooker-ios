@@ -258,7 +258,8 @@ function checkAutoSwitch(now){
   const base=now instanceof Date?now:serverNow();
   const target=new Date(base.getTime());
   target.setHours(hh,mm,0,0);
-  if(base.getTime()>=target.getTime())triggerSwitchToBooking();
+  const diff=base.getTime()-target.getTime();
+  if(diff>=0&&diff<12*60*60*1000)triggerSwitchToBooking();
 }
 
 /* ========= セレクタ ========= */
