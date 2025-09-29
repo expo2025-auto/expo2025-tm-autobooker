@@ -151,6 +151,73 @@ Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
 const __nrAutoReloaded=consumeAutoReloadMark();
 let ManualReloadKick=state.r&&!state.keepAlive&&!__nrAutoReloaded;
+const RELOAD_READY_TIMEOUT_MS=15000;
+let reloadReadyResolved=!__nrAutoReloaded;
+let reloadReadyResolver=null;
+let reloadReadyPromise=null;
+if(reloadReadyResolved){
+  reloadReadyPromise=Promise.resolve(true);
+}else{
+  reloadReadyPromise=new Promise(res=>{reloadReadyResolver=res;});
+}
+function markReloadReady(){
+  if(reloadReadyResolved)return;
+  reloadReadyResolved=true;
+  const resolver=reloadReadyResolver;
+  reloadReadyResolver=null;
+  reloadReadyPromise=Promise.resolve(true);
+  try{resolver?.(true);}catch{}
+}
+async function waitReloadReady(){
+  if(reloadReadyResolved)return true;
+  let finished=false;
+  const timeout=new Promise(res=>{
+    setTimeout(()=>{
+      if(!reloadReadyResolved){
+        reloadReadyResolved=true;
+        const resolver=reloadReadyResolver;
+        reloadReadyResolver=null;
+        reloadReadyPromise=Promise.resolve(false);
+        try{resolver?.(false);}catch{}
+      }
+      finished=true;
+      res(false);
+    },RELOAD_READY_TIMEOUT_MS);
+  });
+  await Promise.race([reloadReadyPromise,timeout]).catch(()=>{});
+  return !finished;
+}
+let pendingReload=false;
+let pendingResetFail=false;
+function requestReload({resetFailBefore=false,ensureReady=true,delay=0}={}){
+  if(pendingReload){
+    if(resetFailBefore) pendingResetFail=true;
+    return;
+  }
+  pendingReload=true;
+  pendingResetFail=resetFailBefore;
+  (async()=>{
+    try{
+      if(ensureReady){
+        await waitReloadReady();
+      }
+      if(delay>0){
+        await new Promise(res=>setTimeout(res,delay));
+      }
+      if(pendingResetFail){
+        try{resetFail();}catch{}
+      }
+      pendingResetFail=false;
+      const doReload=safeReload;
+      pendingReload=false;
+      doReload();
+    }catch(e){
+      pendingReload=false;
+      pendingResetFail=false;
+      throw e;
+    }
+  })();
+}
 ;(function migrateOld(){
   try{
     const old=Lget(CONF_KEY);
@@ -194,7 +261,7 @@ function scheduleKeepAliveReload(){
   if(!state.keepAlive)return;
   KeepAliveNextAt=Date.now()+KEEP_ALIVE_INTERVAL_MS;
   if(ui&&typeof ui.updateKeepAliveCountdown==='function')ui.updateKeepAliveCountdown();
-  KeepAliveTimer=setTimeout(()=>{if(!state.keepAlive)return;KeepAliveNextAt=null;setUIStatus('ログイン維持リロード実行');safeReload()},KEEP_ALIVE_INTERVAL_MS);
+  KeepAliveTimer=setTimeout(()=>{if(!state.keepAlive)return;KeepAliveNextAt=null;setUIStatus('ログイン維持リロード実行');requestReload({ensureReady:true});},KEEP_ALIVE_INTERVAL_MS);
 }
 function updateKeepAliveCountdownDisplay(){
   if(!state.keepAlive||KeepAliveNextAt===null)return;
@@ -336,14 +403,14 @@ async function waitCalendarReady(timeout=5000){
   // 短い静穏（描画の揺れ止め）
   return await new Promise(res=>{
     let idleTimer=null, done=false;
-    const finish=()=>{ if(!done){ done=true; try{mo.disconnect()}catch{}; res(true); } };
+    const finish=()=>{ if(!done){ done=true; try{mo.disconnect()}catch{}; markReloadReady(); res(true); } };
     const mo = new MutationObserver(()=>{
       clearTimeout(idleTimer);
       idleTimer = setTimeout(finish, 140);
     });
     mo.observe(root, {subtree:true, childList:true, attributes:true});
     idleTimer = setTimeout(finish, 160);
-    setTimeout(()=>{ if(!done){ try{mo.disconnect()}catch{}; res(true); } }, timeout);
+    setTimeout(()=>{ if(!done){ done=true; try{mo.disconnect()}catch{}; markReloadReady(); res(true); } }, timeout);
   });
 }
 
@@ -444,7 +511,8 @@ function firstEnabledSlot(allowedKeys){
 }
 async function waitFirstEnabledSlot(allowedKeys,timeout=6000){
   const getter=()=>firstEnabledSlot(allowedKeys);
-  const got=getter(); if(got) return got;
+  const got=getter(); if(got){markReloadReady(); return got;}
+  markReloadReady();
   return await waitUntil(getter,{timeout,interval:60,attrs:['class','disabled','aria-disabled','data-disabled']});
 }
 function isEnabled(el){
@@ -811,13 +879,13 @@ function scheduleRetryOrNextMinute(){
   if(sec<53){
     if(state.r){
       ui.setStatus('再試行中');
-      safeReload();
+      requestReload({ensureReady:true});
     }
   }else{
     const d=delayUntilNextMinute_43s();
     ui.setStatus('待機中');
     clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    Tm=setTimeout(()=>{if(state.r){requestReload({resetFailBefore:true,ensureReady:true});}},d);
   }
 }
 
@@ -949,7 +1017,7 @@ async function runCycle(){
       const d=delayUntilNextMinute_43s();
       ui.setStatus('待機中');
       clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      Tm=setTimeout(()=>{if(state.r){requestReload({resetFailBefore:true,ensureReady:true});}},d);
       return;
     }
 
@@ -957,7 +1025,7 @@ async function runCycle(){
       const d=delayUntilNextMinute_43s();
       ui.setStatus('再試行中');
       clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      Tm=setTimeout(()=>{if(state.r){requestReload({resetFailBefore:true,ensureReady:true});}},d);
       return;
     }
   }
@@ -1005,7 +1073,7 @@ async function runCycle(){
   const d=delayUntilNextMinute_43s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
-  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+  Tm=setTimeout(()=>{if(state.r){requestReload({resetFailBefore:true,ensureReady:true});}},d);
 }
 
 if(state.r&&!state.keepAlive)runCycle();
