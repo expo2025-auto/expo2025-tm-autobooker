@@ -29,6 +29,14 @@ Tampermonkey userscript: Expo2025 の新規予約をイベント駆動で補助�
    ```
    自動更新は Tampermonkey の設定で有効にしておきます。
 
+### Android 端末で利用する場合
+
+`expo2025-reserver-android.user.js` は Android ブラウザ（Kiwi など）向けに、
+リロード実行前に画面描画と空き枠監視の再稼働を待機する調整を加えた
+Tampermonkey スクリプトです。Android 端末ではこちらをインストールし、
+`https://github.com/<USER>/<REPO>/raw/refs/heads/main/expo2025-reserver-android.user.js`
+を Tampermonkey の「URL から追加」で指定してください。
+
 ## リリース（任意）
 
 タグ（例: `v0.1.1`）を打つと、GitHub Actions が `dist/*.user.js` を Release Assets に添付します。
