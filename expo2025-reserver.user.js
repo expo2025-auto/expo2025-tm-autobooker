@@ -256,7 +256,7 @@ function computeNextSwitchAt(base,hh,mm){
   const ref=base instanceof Date?base:serverNow();
   const target=new Date(ref.getTime());
   target.setHours(hh,mm,0,0);
-  if(target.getTime()<ref.getTime())target.setDate(target.getDate()+1);
+  if(target.getTime()<=ref.getTime())target.setDate(target.getDate()+1);
   return target.getTime();
 }
 function parseSwitchTimeString(str){
@@ -277,7 +277,16 @@ function checkAutoSwitch(now){
     state.switchNextAt=computeNextSwitchAt(base,parsed.hh,parsed.mm);
     saveState();
   }
-  if(base.getTime()>=state.switchNextAt)triggerSwitchToBooking();
+  if(base.getTime()>=state.switchNextAt){
+    if(base.getTime()>state.switchNextAt){
+      const recalculated=computeNextSwitchAt(base,parsed.hh,parsed.mm);
+      if(recalculated!==state.switchNextAt){
+        state.switchNextAt=recalculated;
+        saveState();
+      }
+    }
+    if(base.getTime()>=state.switchNextAt)triggerSwitchToBooking();
+  }
 }
 
 /* ========= セレクタ ========= */
