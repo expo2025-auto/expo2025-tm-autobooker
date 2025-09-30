@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      2.55
+// @version      2.2
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -13,13 +13,10 @@
 
 /* ========= ユーティリティ ========= */
 const CONF_KEY='nr_conf_v1',STATE_KEY='nr_state_v1';
-const AUTO_RELOAD_FLAG='nr_auto_reload_v1';
 function Lget(k){try{return JSON.parse(localStorage.getItem(k)||'{}')}catch{return{}}}
 function Lset(k,v){localStorage.setItem(k,JSON.stringify(v))}
 function Sget(k){try{return JSON.parse(sessionStorage.getItem(k)||'{}')}catch{return{}}}
 function Sset(k,v){sessionStorage.setItem(k,JSON.stringify(v))}
-function markAutoReload(){try{sessionStorage.setItem(AUTO_RELOAD_FLAG,Date.now().toString())}catch{}}
-function consumeAutoReloadMark(){try{const v=sessionStorage.getItem(AUTO_RELOAD_FLAG);if(v!==null){sessionStorage.removeItem(AUTO_RELOAD_FLAG);return true}}catch{}return false}
 const Q=(s,r=document)=>r.querySelector(s);
 const A=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const D=e=>!e||e.disabled||(e.getAttribute('aria-disabled')||'').toLowerCase()==='true'||/\bdisabled\b/i.test(e.className||'')||e.getAttribute('data-disabled')==='true'||(()=>{try{return getComputedStyle(e).pointerEvents==='none'}catch{return!1}})();
@@ -29,7 +26,6 @@ function waitUntil(checkFn,{timeout=8000,interval=80,attrs,root=document.body}={
 
 // 安全リロード
 function safeReload(){
-  markAutoReload();
   try{
     console.log('[NR] reload at', new Date().toLocaleTimeString());
     location.reload();
@@ -160,8 +156,6 @@ if(typeof state.switchTime!=='string')state.switchTime='';
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
-const __nrAutoReloaded=consumeAutoReloadMark();
-let ManualReloadKick=state.r&&!state.keepAlive&&!__nrAutoReloaded;
 ;(function migrateOld(){
   try{
     const old=Lget(CONF_KEY);
@@ -494,19 +488,8 @@ async function flowConfirm(targetISO){
     '#__next main button[class*="style_main__next_button__"]',
     '#__next main button[class*="style_next_button__"]'
   ];
-  const changeBtnSelectors=[
-    'div[role="status"] button.style_next_button__N_pbs',
-    'div[role="status"] button[data-message-code="SW_GP_DL_117_0413"]',
-    'div[role="status"] button',
-    'div[class*="toast"] button.style_next_button__N_pbs',
-    'div[class*="toast"] button',
-    'button.style_next_button__N_pbs',
-    'button[data-message-code="SW_GP_DL_117_0413"]'
-  ];
   const confirmTextHints=['来場日時を設定する','来場日時を設定','日時を設定','日時設定'];
-  const setDateTextHints=['来場日時を設定する','来場日時を設定'];
-  const changeTextHints=['来場日時を変更する','来場日時を変更'];
-  const normalizedTextOf=el=>{
+  const matchesConfirmText=el=>{
     const values=[];
     if(el.textContent)values.push(el.textContent);
     if(el.innerText&&el.innerText!==el.textContent)values.push(el.innerText);
@@ -518,33 +501,8 @@ async function flowConfirm(targetISO){
       .filter(Boolean)
       .map(v=>String(v).replace(/\s+/g,''))
       .join('');
-    return normalized;
-  };
-  const matchesHints=(el,hints)=>{
-    const normalized=normalizedTextOf(el);
     if(!normalized)return false;
-    return hints.some(h=>normalized.includes(h));
-  };
-  const matchesConfirmText=el=>matchesHints(el,confirmTextHints);
-  const matchesSetDateText=el=>matchesHints(el,setDateTextHints);
-  const matchesChangeText=el=>matchesHints(el,changeTextHints);
-  const findChangeBtn=(exclude=new Set())=>{
-    for(const sel of changeBtnSelectors){
-      const candidates=A(sel);
-      if(!candidates.length)continue;
-      for(const el of candidates){
-        if(exclude.has(el))continue;
-        if(!isEnabled(el)||!vis(el))continue;
-        if(matchesChangeText(el))return el;
-      }
-    }
-    const candidates=A('button, [role="button"], a');
-    for(const el of candidates){
-      if(exclude.has(el))continue;
-      if(!isEnabled(el)||!vis(el))continue;
-      if(matchesChangeText(el))return el;
-    }
-    return null;
+    return confirmTextHints.some(h=>normalized.includes(h));
   };
   const findConfirmBtn=(exclude=new Set())=>{
     for(const sel of confirmBtnSelectors){
@@ -569,24 +527,8 @@ async function flowConfirm(targetISO){
     b=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:12000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   }
   if(!b||selectedDateISO()!==targetISO)return 'none';
-  const triggeredSetDate=matchesSetDateText(b);
   KC(b);
   clickedButtons.add(b);
-  if(triggeredSetDate){
-    const changeBtnImmediate=findChangeBtn(clickedButtons);
-    let changeBtn=changeBtnImmediate;
-    if(!changeBtn){
-      changeBtn=await waitUntil(()=>findChangeBtn(clickedButtons),{
-        timeout:5000,
-        interval:80,
-        attrs:['class','style','aria-hidden','data-disabled','data-message-code']
-      });
-    }
-    if(changeBtn){
-      KC(changeBtn);
-      clickedButtons.add(changeBtn);
-    }
-  }
   if(selectedDateISO()!==targetISO)return 'none';
   const nextBtn=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:8000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   if(nextBtn){
@@ -952,24 +894,20 @@ async function runCycle(){
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  const skipTimingGate=ManualReloadKick;
-  if(ManualReloadKick)ManualReloadKick=false;
-  if(!skipTimingGate){
-    if(sec<43){
-      const d=delayUntilNextMinute_43s();
-      ui.setStatus('待機中');
-      clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-      return;
-    }
+  if(sec<43){
+    const d=delayUntilNextMinute_43s();
+    ui.setStatus('待機中');
+    clearTimeout(Tm);
+    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    return;
+  }
 
-    if(sec>=53){
-      const d=delayUntilNextMinute_43s();
-      ui.setStatus('再試行中');
-      clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-      return;
-    }
+  if(sec>=53){
+    const d=delayUntilNextMinute_43s();
+    ui.setStatus('再試行中');
+    clearTimeout(Tm);
+    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    return;
   }
 
   ui.setStatus('空き枠探索中');
