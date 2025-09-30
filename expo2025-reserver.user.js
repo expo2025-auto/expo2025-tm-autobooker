@@ -148,11 +148,12 @@ conf.times=normalizeTimeKeys(conf.times);
 Lset(CONF_KEY,conf);
 let stateRaw=Sget(STATE_KEY);
 if(typeof stateRaw!=='object'||!stateRaw){stateRaw={}};
-let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:''},stateRaw);
+let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:'',switchNextAt:0},stateRaw);
 if(typeof state.r!=='boolean')state.r=false;
 if(typeof state.keepAlive!=='boolean')state.keepAlive=false;
 if(typeof state.switchEnabled!=='boolean')state.switchEnabled=false;
 if(typeof state.switchTime!=='string')state.switchTime='';
+if(typeof state.switchNextAt!=='number'||!Number.isFinite(state.switchNextAt))state.switchNextAt=0;
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
@@ -221,7 +222,7 @@ function triggerSwitchToBooking(){
       updated=true;
     }
   }
-  if(!updated&&state.switchEnabled){state.switchEnabled=false;saveState()}
+  if(!updated&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState()}
   if(KeepAliveToggleEl){
     if(KeepAliveToggleEl.checked){
       KeepAliveToggleEl.checked=false;
@@ -251,19 +252,32 @@ function triggerSwitchToBooking(){
   }
   keepAliveSwitching=false;
 }
-function checkAutoSwitch(now){
-  if(!state.keepAlive||!state.switchEnabled||keepAliveSwitching)return;
-  const t=state.switchTime;
-  if(!t||typeof t!=='string')return;
-  const m=t.match(/^(\d{1,2}):(\d{2})$/);
-  if(!m)return;
+function computeNextSwitchAt(base,hh,mm){
+  const ref=base instanceof Date?base:serverNow();
+  const target=new Date(ref.getTime());
+  target.setHours(hh,mm,0,0);
+  if(target.getTime()<ref.getTime())target.setDate(target.getDate()+1);
+  return target.getTime();
+}
+function parseSwitchTimeString(str){
+  if(typeof str!=='string'||!str)return null;
+  const m=str.match(/^(\d{1,2}):(\d{2})$/);
+  if(!m)return null;
   const hh=Number(m[1]);
   const mm=Number(m[2]);
-  if(Number.isNaN(hh)||Number.isNaN(mm))return;
+  if(Number.isNaN(hh)||Number.isNaN(mm))return null;
+  return {hh,mm};
+}
+function checkAutoSwitch(now){
+  if(!state.keepAlive||!state.switchEnabled||keepAliveSwitching)return;
+  const parsed=parseSwitchTimeString(state.switchTime);
+  if(!parsed)return;
   const base=now instanceof Date?now:serverNow();
-  const target=new Date(base.getTime());
-  target.setHours(hh,mm,0,0);
-  if(base.getTime()>=target.getTime())triggerSwitchToBooking();
+  if(!Number.isFinite(state.switchNextAt)||state.switchNextAt<=0){
+    state.switchNextAt=computeNextSwitchAt(base,parsed.hh,parsed.mm);
+    saveState();
+  }
+  if(base.getTime()>=state.switchNextAt)triggerSwitchToBooking();
 }
 
 /* ========= セレクタ ========= */
@@ -857,9 +871,9 @@ function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=do
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
   tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
-keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(switchCheck.checked)switchCheck.checked=false;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
-switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{if(state.switchEnabled){state.switchEnabled=false;saveState();}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
-timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
+  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
+  switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;const parsed=parseSwitchTimeString(state.switchTime);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{let changed=false;if(state.switchEnabled){state.switchEnabled=false;changed=true;}if(state.switchNextAt!==0){state.switchNextAt=0;changed=true;}if(changed)saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
+  timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{if(state.switchEnabled&&v){const parsed=parseSwitchTimeString(v);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}}else if(!state.switchEnabled&&state.switchNextAt!==0){state.switchNextAt=0;}saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
 function setStatus(x){if(lastStatusText!==x){lastStatusText=x;stat.textContent=x;}}
 function updateKeepAliveCountdown(){if(!state.keepAlive)return;const msg=keepAliveStatusText();if(lastStatusText!==msg){lastStatusText=msg;stat.textContent=msg;}}
 function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}const txt=state.keepAlive?keepAliveStatusText():'停止中';stat.textContent=txt;lastStatusText=txt}
