@@ -67,27 +67,43 @@
   };
 
   const ensureClockElement = () => {
-    if (clockElement) {
+    if (clockElement && document.body.contains(clockElement)) {
       return clockElement;
     }
 
     const existing = document.getElementById(CLOCK_ID);
-    if (existing) {
+    if (existing && document.body.contains(existing)) {
       clockElement = existing;
+      applyClockStyles(clockElement);
       return clockElement;
     }
 
     const el = document.createElement('div');
     el.id = CLOCK_ID;
-    el.style.fontFamily = 'monospace';
-    el.style.fontSize = '2rem';
-    el.style.letterSpacing = '0.1em';
-    el.style.textAlign = 'center';
-    el.style.margin = '1rem';
+    applyClockStyles(el);
     document.body.appendChild(el);
     clockElement = el;
     return clockElement;
   };
+
+  function applyClockStyles(el) {
+    el.style.position = 'fixed';
+    el.style.left = '1rem';
+    el.style.top = '50%';
+    el.style.transform = 'translateY(-50%)';
+    el.style.fontFamily = 'monospace';
+    el.style.fontSize = '2rem';
+    el.style.letterSpacing = '0.1em';
+    el.style.textAlign = 'left';
+    el.style.padding = '0.5rem 1rem';
+    el.style.background = 'rgba(0, 0, 0, 0.65)';
+    el.style.color = '#fff';
+    el.style.borderRadius = '0.5rem';
+    el.style.boxShadow = '0 0.25rem 0.5rem rgba(0, 0, 0, 0.25)';
+    el.style.zIndex = '2147483647';
+    el.style.pointerEvents = 'none';
+    el.style.userSelect = 'none';
+  }
 
   const init = () => {
     ensureClockElement();
