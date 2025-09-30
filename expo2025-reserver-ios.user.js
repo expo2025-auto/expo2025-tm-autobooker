@@ -863,7 +863,7 @@ switchWrap.appendChild(timeInput);switchWrap.appendChild(switchLabelBox);
 switchRow.appendChild(switchLabel);switchRow.appendChild(switchWrap);
   const rTime=row(6);
   const labT=document.createElement('label');labT.textContent='現在時刻';labT.style.width='58px';labT.style.fontSize='12px';
-  const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='---- --:--';
+  const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='---- --:--:--';
   rTime.appendChild(labT);rTime.appendChild(tm);
   const rTimePref=row();
   const labTimePref=document.createElement('label');labTimePref.textContent='時間帯';labTimePref.style.width='58px';labTimePref.style.fontSize='12px';
@@ -915,7 +915,7 @@ let lastStatusText=stat.textContent;
 document.body.appendChild(w);
 AutoToggleEl=tg;KeepAliveToggleEl=keepToggle;SwitchCheckEl=switchCheck;SwitchTimeInputEl=timeInput;
 function setClock(s){tm.textContent=s}
-function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
+function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())}
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
