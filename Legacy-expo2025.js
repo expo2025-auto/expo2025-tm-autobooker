@@ -7,8 +7,8 @@
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
 // @grant        none
-// @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/expo2025-reserver.user.js
-// @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/expo2025-reserver.user.js
+// @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/Legacy-expo2025.js
+// @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/Legacy-expo2025.js
 // @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
 
