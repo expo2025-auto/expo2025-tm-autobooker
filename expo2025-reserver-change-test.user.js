@@ -1295,14 +1295,10 @@ const stat=document.createElement('div');stat.style.fontSize='12px';stat.textCon
 let lastStatusText=stat.textContent;
 const infoWrap=document.createElement('div');
 Object.assign(infoWrap.style,{fontSize:'11px',marginTop:'6px',lineHeight:'1.4'});
-const currentInfo=document.createElement('div');
 const attemptInfo=document.createElement('div');
 const labelTextStyle='color:#333;';
-currentInfo.style.cssText=labelTextStyle;
 attemptInfo.style.cssText=labelTextStyle;
-infoWrap.appendChild(currentInfo);
 infoWrap.appendChild(attemptInfo);
-currentInfo.textContent='現在の予約: 取得中...';
 attemptInfo.textContent='変更先候補: 未設定';
   w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rTimePref);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);w.appendChild(infoWrap);
 document.body.appendChild(w);
@@ -1346,7 +1342,6 @@ function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubb
     return `${prefix}: ${dateText}${timeText?` ${timeText}`:''}`;
   }
   function updateReservationInfo({current,attempt}){
-    currentInfo.textContent=formatReservationText('現在の予約',current);
     attemptInfo.textContent=formatReservationText('変更先候補',attempt);
   }
   updateReservationInfo({current:initialReservationDisplay,attempt:attemptReservationDisplay});
