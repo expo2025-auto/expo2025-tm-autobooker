@@ -326,7 +326,7 @@ function hasFailToast(){
 }
 ;(function armFastFailReload(){
   let armed=false;
-  const kick=()=>{if(armed)return;armed=true;setTimeout(()=>{if(hasFailToast())robustReload()},500)};
+  const kick=()=>{if(armed)return;armed=true;robustReload()};
   const mo=new MutationObserver(muts=>{
     for(const m of muts){
       if(m.type==='childList'){
