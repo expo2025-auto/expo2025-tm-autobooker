@@ -303,6 +303,11 @@ function getFail(){return +(sessionStorage.getItem(FAIL_KEY)||'0')}
 function setFail(n){sessionStorage.setItem(FAIL_KEY,n)}
 function resetFail(){setFail(0)}
 let __reloading=false,__reloadStamp=0;
+const FORCE_SCAN_KEY='nr_force_scan_count';
+function getForceScanCount(){const v=+(sessionStorage.getItem(FORCE_SCAN_KEY)||'0');return Number.isFinite(v)&&v>0?Math.floor(v):0}
+function setForceScanCount(n){const v=Math.max(0,Math.floor(Number(n)||0));sessionStorage.setItem(FORCE_SCAN_KEY,String(v))}
+function ensureForceScanAtLeast(n){const current=getForceScanCount();if(n>current)setForceScanCount(n)}
+function consumeForceScan(){const current=getForceScanCount();if(current>0){setForceScanCount(current-1);return true;}return false;}
 function robustReload(){
   if(__reloading)return;
   const n=getFail(); if(n>=3)return;
@@ -341,6 +346,17 @@ function hasFailToast(){
   });
   mo.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-hidden','aria-modal']});
   if(hasFailToast()) kick();
+})();
+
+;(function detectManualReload(){
+  try{
+    const entries=performance.getEntriesByType?.('navigation');
+    const navEntry=entries&&entries.length?entries[0]:null;
+    const type=navEntry?navEntry.type:((performance.navigation&&performance.navigation.type===1)?'reload':null);
+    if(type==='reload'){
+      ensureForceScanAtLeast(1);
+    }
+  }catch{}
 })();
 
 /* ========= カレンダー/日付/スロット ========= */
@@ -423,6 +439,17 @@ function getCellByISO(iso){
 }
 function cellIsSelected(cell){return !!cell&&cell.getAttribute('aria-pressed')==='true'}
 function selectedDateISO(){const sel=A('.style_selector_item__9RWJw[aria-pressed="true"] time[datetime]').find(Boolean);return sel?.getAttribute('datetime')||null}
+const initialSelectionState={captured:false,dateISO:null,slotKey:null,dateReselected:false,slotReselected:false};
+function captureInitialSelection(){
+  if(initialSelectionState.captured)return;
+  initialSelectionState.captured=true;
+  try{initialSelectionState.dateISO=selectedDateISO();}catch{initialSelectionState.dateISO=null;}
+  try{initialSelectionState.slotKey=getSelectedSlotKey();}catch{initialSelectionState.slotKey=null;}
+}
+function needsDateReselect(iso){return !!iso&&initialSelectionState.captured&&!initialSelectionState.dateReselected&&initialSelectionState.dateISO===iso;}
+function needsSlotReselect(key){return !!key&&initialSelectionState.captured&&!initialSelectionState.slotReselected&&initialSelectionState.slotKey===key;}
+function markDateReselected(){if(initialSelectionState.captured&&!initialSelectionState.dateReselected)initialSelectionState.dateReselected=true;}
+function markSlotReselected(){if(initialSelectionState.captured&&!initialSelectionState.slotReselected)initialSelectionState.slotReselected=true;}
 function isDateCellEnabled(cell){
   if(!cell||!vis(cell))return false;
   if(cell.classList.contains('style_selector_item_disabled__iSIA2'))return false;
@@ -433,19 +460,32 @@ function isDateCellEnabled(cell){
 }
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
+  captureInitialSelection();
   const already=selectedDateISO();
-  if(already===iso){const c=getCellByISO(iso);return cellIsSelected(c)}
+  if(already===iso){
+    const cellExisting=getCellByISO(iso);
+    if(needsDateReselect(iso)&&cellExisting){
+      try{cellExisting.scrollIntoView({block:'center',behavior:'instant'})}catch{}
+      [cellExisting,cellExisting.querySelector('time'),cellExisting.querySelector('div')].filter(Boolean).forEach(t=>KC(t));
+      await waitUntil(()=>{const c=getCellByISO(iso);return c&&cellIsSelected(c)?c:null},{timeout:600,attrs:['aria-pressed','class']});
+      markDateReselected();
+    }else if(needsDateReselect(iso)&&!cellExisting){
+      markDateReselected();
+    }
+    return cellIsSelected(cellExisting);
+  }
   let cell=getCellByISO(iso);
   if(!cell||!isDateCellEnabled(cell)) return false;
   try{cell.scrollIntoView({block:'center',behavior:'instant'})}catch{}
   const promise=waitUntil(()=>{const c=getCellByISO(iso);return(c&&cellIsSelected(c))?c:null},{timeout,attrs:['aria-pressed','class']});
   [cell,cell.querySelector('time'),cell.querySelector('div')].filter(Boolean).forEach(t=>KC(t));
-  const ok=await promise; if(ok)return true;
+  const ok=await promise; if(ok){markDateReselected();return true;}
   cell=getCellByISO(iso);
   if(cell&&isDateCellEnabled(cell)){
     KC(cell);KC(cell.querySelector('time'));KC(cell.querySelector('div'));
     const ok2=await waitUntil(()=>{const c=getCellByISO(iso);return(c&&cellIsSelected(c))?c:null},{timeout:2000,attrs:['aria-pressed','class']});
-    return !!ok2;
+    if(ok2){markDateReselected();return true;}
+    return false;
   }
   return false;
 }
@@ -529,11 +569,34 @@ function getSelectedSlotKey(){
   }
   return null;
 }
+try{captureInitialSelection();}catch{}
 async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
   if(!targetKey)return false;
+  captureInitialSelection();
+  const requireReselect=needsSlotReselect(targetKey);
+  let reselectAttempted=false;
   for(let attempt=0;attempt<=retries;attempt++){
     const current=getSelectedSlotKey();
-    if(current===targetKey)return true;
+    if(current===targetKey){
+      if(requireReselect&&!reselectAttempted){
+        reselectAttempted=true;
+        const slots=collectSlotElements();
+        const match=slots.find(el=>slotElementKey(el)===targetKey);
+        if(match){
+          KC(match);
+          await waitUntil(()=>slotElementSelected(match)?true:null,{
+            timeout:Math.max(600,timeout),
+            interval:80,
+            attrs:['aria-pressed','class','data-selected']
+          });
+        }
+        markSlotReselected();
+        if(getSelectedSlotKey()===targetKey)return true;
+        continue;
+      }
+      markSlotReselected();
+      return true;
+    }
     const slot=firstEnabledSlot([targetKey]);
     if(!slot){
       const waited=await waitFirstEnabledSlot([targetKey],timeout);
@@ -547,9 +610,11 @@ async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
       interval:80,
       attrs:['aria-pressed','class','data-selected']
     });
-    if(ok)return true;
+    if(ok){markSlotReselected();return true;}
   }
-  return getSelectedSlotKey()===targetKey;
+  const finalKey=getSelectedSlotKey();
+  if(finalKey===targetKey){markSlotReselected();return true;}
+  return false;
 }
 async function ensurePreferredSlotSelection({targetKey,allowedKeys,timeout=1800,retries=2}={}){
   const normalized=normalizeTimeKeys(Array.isArray(allowedKeys)?allowedKeys:[]);
@@ -929,7 +994,7 @@ async function tryOnceForDate(d){
   const o=await waitOutcome(12000);
   if(o==='typeSelect') return 'typeSelect';
   if(o==='ok') return 'ok';
-  if(o==='ng') return 'ng';
+  if(o==='ng'){ensureForceScanAtLeast(2);return 'ng';}
   return 'none';
 }
 
@@ -1037,7 +1102,7 @@ function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+p
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
-  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();setForceScanCount(0);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
   keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
   switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;const parsed=parseSwitchTimeString(state.switchTime);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{let changed=false;if(state.switchEnabled){state.switchEnabled=false;changed=true;}if(state.switchNextAt!==0){state.switchNextAt=0;changed=true;}if(changed)saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
   timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{if(state.switchEnabled&&v){const parsed=parseSwitchTimeString(v);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}}else if(!state.switchEnabled&&state.switchNextAt!==0){state.switchNextAt=0;}saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
@@ -1057,7 +1122,7 @@ if(state.keepAlive){
 }
 
 /* ========= メイン ========= */
-function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
+function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();setForceScanCount(0);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
@@ -1073,22 +1138,25 @@ async function runCycle(){
     return;
   }
 
+  const forceScanActive=consumeForceScan();
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<43){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
-  }
+  if(!forceScanActive){
+    if(sec<43){
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('待機中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      return;
+    }
 
-  if(sec>=53){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('再試行中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
+    if(sec>=53){
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('再試行中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      return;
+    }
   }
 
   ui.setStatus('空き枠探索中');
@@ -1128,7 +1196,7 @@ async function runCycle(){
     const r=await tryOnceForDate(d);
     if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
     if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');return}
-    if(r==='ng'){ui.setStatus('再試行中');break}
+    if(r==='ng'){ensureForceScanAtLeast(2);ui.setStatus('再試行中');break}
   }
 
   const d=delayUntilNextMinute_43s();
