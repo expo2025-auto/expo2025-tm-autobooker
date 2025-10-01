@@ -462,6 +462,88 @@ async function waitFirstEnabledSlot(allowedKeys,timeout=6000){
   const got=getter(); if(got) return got;
   return await waitUntil(getter,{timeout,interval:60,attrs:['class','disabled','aria-disabled','data-disabled']});
 }
+function slotElementRoot(el){
+  if(!el)return null;
+  if(el.matches?.('button, [role="button"]'))return el;
+  return el.closest?.('button, [role="button"]')||el;
+}
+function slotElementSelected(el){
+  const root=slotElementRoot(el);
+  if(!root)return false;
+  const ariaPressed=root.getAttribute?.('aria-pressed');
+  if(ariaPressed&&ariaPressed.toLowerCase()==='true')return true;
+  if(root.matches?.('[aria-pressed="true"]'))return true;
+  const dataSelected=root.getAttribute?.('data-selected');
+  if(dataSelected&&dataSelected.toLowerCase()==='true')return true;
+  const className=(root.getAttribute?.('class')||root.className||'');
+  if(/\bselected\b/i.test(className))return true;
+  const pressedDesc=root.querySelector?.('[aria-pressed="true"],[data-selected="true"]');
+  if(pressedDesc)return true;
+  return false;
+}
+function slotElementKey(el){
+  const root=slotElementRoot(el)||el;
+  const time=extractSlotTime(root);
+  if(!time)return null;
+  const choice=TIME_CHOICES.find(opt=>opt.hour===time.hour);
+  return choice?choice.key:null;
+}
+function collectSlotElements(){
+  const lists=[
+    A('div[role=button].style_main__button__Z4RWX'),
+    A('button.style_main__button__Z4RWX'),
+    A('[role=button].style_main__button__Z4RWX')
+  ];
+  const merged=[];
+  for(const arr of lists){
+    for(const el of arr){
+      if(!merged.includes(el))merged.push(el);
+    }
+  }
+  return merged;
+}
+function getSelectedSlotKey(){
+  const slots=collectSlotElements();
+  for(const el of slots){
+    if(slotElementSelected(el)){
+      const key=slotElementKey(el);
+      if(key)return key;
+    }
+  }
+  return null;
+}
+async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
+  if(!targetKey)return false;
+  for(let attempt=0;attempt<=retries;attempt++){
+    const current=getSelectedSlotKey();
+    if(current===targetKey)return true;
+    const slot=firstEnabledSlot([targetKey]);
+    if(!slot){
+      const waited=await waitFirstEnabledSlot([targetKey],timeout);
+      if(!waited)return false;
+      KC(waited);
+    }else{
+      KC(slot);
+    }
+    const ok=await waitUntil(()=>getSelectedSlotKey()===targetKey?true:null,{
+      timeout:timeout+attempt*200,
+      interval:80,
+      attrs:['aria-pressed','class','data-selected']
+    });
+    if(ok)return true;
+  }
+  return getSelectedSlotKey()===targetKey;
+}
+async function ensurePreferredSlotSelection({targetKey,allowedKeys,timeout=1800,retries=2}={}){
+  const normalized=normalizeTimeKeys(Array.isArray(allowedKeys)?allowedKeys:[]);
+  const key=targetKey||normalized[0];
+  if(!key){
+    if(!normalized.length)return true;
+    const current=getSelectedSlotKey();
+    return normalized.includes(current||'');
+  }
+  return await ensureSlotSelectionByKey(key,{timeout,retries});
+}
 function isEnabled(el){
   if(!el||!vis(el))return false;
   if(el.disabled)return false;
@@ -487,7 +569,37 @@ async function waitTypeSelectionPage(timeout=8000){
   const hit=await waitUntil(()=>isTypeSelectionPage()?true:null,{timeout,interval:80,attrs:['data-message-code','class','style','aria-hidden']});
   return !!hit;
 }
-async function flowConfirm(targetISO){
+function needsTimeVerification(targetTimeKey,allowedTimeKeys){
+  if(targetTimeKey)return true;
+  return Array.isArray(allowedTimeKeys)&&allowedTimeKeys.length>0;
+}
+async function ensureTargetDateTimeSelection(targetISO,{targetTimeKey,allowedTimeKeys}={},options={}){
+  const {timeout=2200,retries=2}=options||{};
+  if(targetISO&&selectedDateISO()!==targetISO){
+    const ensured=await ensureDate(targetISO,Math.max(timeout,1800)+2000);
+    if(!ensured)return false;
+  }
+  const normalized=normalizeTimeKeys(Array.isArray(allowedTimeKeys)?allowedTimeKeys:[]);
+  if(targetTimeKey||normalized.length){
+    const ensuredSlot=await ensurePreferredSlotSelection({
+      targetKey:targetTimeKey,
+      allowedKeys:normalized,
+      timeout,
+      retries
+    });
+    if(!ensuredSlot)return false;
+  }
+  if(targetISO&&selectedDateISO()!==targetISO)return false;
+  if(targetTimeKey){
+    return getSelectedSlotKey()===targetTimeKey;
+  }
+  if(normalized.length){
+    const current=getSelectedSlotKey();
+    return current?normalized.includes(current):false;
+  }
+  return true;
+}
+async function flowConfirm(targetISO,{targetTimeKey,allowedTimeKeys}={}){
   if(selectedDateISO()!==targetISO)return 'none';
   const host='#__next > div > div > main > div > div.style_main__add_cart_button__DCOw8';
   const confirmBtnSelectors=[
@@ -574,6 +686,10 @@ async function flowConfirm(targetISO){
     b=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:12000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   }
   if(!b||selectedDateISO()!==targetISO)return 'none';
+  if(needsTimeVerification(targetTimeKey,allowedTimeKeys)){
+    const ensured=await ensureTargetDateTimeSelection(targetISO,{targetTimeKey,allowedTimeKeys},{timeout:2400,retries:3});
+    if(!ensured||selectedDateISO()!==targetISO)return 'none';
+  }
   const triggeredSetDate=matchesSetDateText(b);
   KC(b);
   clickedButtons.add(b);
@@ -593,8 +709,16 @@ async function flowConfirm(targetISO){
     }
   }
   if(selectedDateISO()!==targetISO)return 'none';
+  if(needsTimeVerification(targetTimeKey,allowedTimeKeys)){
+    const ensuredAgain=await ensureTargetDateTimeSelection(targetISO,{targetTimeKey,allowedTimeKeys},{timeout:2400,retries:3});
+    if(!ensuredAgain||selectedDateISO()!==targetISO)return 'none';
+  }
   const nextBtn=await waitUntil(()=>findConfirmBtn(clickedButtons),{timeout:8000,interval:80,attrs:['class','disabled','aria-disabled','data-disabled','aria-hidden']});
   if(nextBtn){
+    if(needsTimeVerification(targetTimeKey,allowedTimeKeys)){
+      const ensuredFinal=await ensureTargetDateTimeSelection(targetISO,{targetTimeKey,allowedTimeKeys},{timeout:2400,retries:3});
+      if(!ensuredFinal||selectedDateISO()!==targetISO)return 'none';
+    }
     KC(nextBtn);
     clickedButtons.add(nextBtn);
   }
@@ -803,9 +927,17 @@ async function tryOnceForDate(d){
   if(!slot) return 'none';
 
   KC(slot);
+  const slotKey=slotElementKey(slot);
+  const slotEnsured=await ensurePreferredSlotSelection({
+    targetKey:slotKey,
+    allowedKeys:activeTimes,
+    timeout:2000,
+    retries:3
+  });
+  if(!slotEnsured) return 'none';
   if(selectedDateISO()!==iso) return 'none';
 
-  const confirmResult=await flowConfirm(iso);
+  const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
   if(confirmResult==='typeSelect') return 'typeSelect';
   if(confirmResult!=='clicked') return 'none';
   const o=await waitOutcome(12000);
