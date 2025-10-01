@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Expo2025 来場予約・変更
+// @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
 // @version      2.8
 // @author       You
