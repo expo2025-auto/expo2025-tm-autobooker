@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約
 // @namespace    http://tampermonkey.net/
-// @version      2.80
+// @version      2.81
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -154,6 +154,8 @@ if(typeof state.keepAlive!=='boolean')state.keepAlive=false;
 if(typeof state.switchEnabled!=='boolean')state.switchEnabled=false;
 if(typeof state.switchTime!=='string')state.switchTime='';
 if(typeof state.switchNextAt!=='number'||!Number.isFinite(state.switchNextAt))state.switchNextAt=0;
+if('retryMinuteKey' in state)delete state.retryMinuteKey;
+if('retryReloads' in state)delete state.retryReloads;
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
@@ -178,6 +180,66 @@ let KeepAliveTimer=null;
 let KeepAliveNextAt=null;
 let keepAliveSwitching=false;
 function setUIStatus(msg){try{if(ui&&typeof ui.setStatus==='function')ui.setStatus(msg)}catch{}}
+let initialReservationDisplay=null;
+let attemptReservationDisplay=null;
+function cloneReservationInfo(info){
+  if(!info)return null;
+  const normalized={
+    iso:info.iso||null,
+    slotKey:info.slotKey||null,
+    slotTime:null
+  };
+  if(info.slotTime&&typeof info.slotTime.hour==='number'){
+    normalized.slotTime={
+      hour:info.slotTime.hour,
+      minute:typeof info.slotTime.minute==='number'?info.slotTime.minute:null
+    };
+  }
+  return normalized;
+}
+function reservationInfoEquals(a,b){
+  if(!a&&!b)return true;
+  if(!a||!b)return false;
+  if(a.iso!==b.iso)return false;
+  if(a.slotKey!==b.slotKey)return false;
+  const at=a.slotTime,bt=b.slotTime;
+  if(!at&&!bt)return true;
+  if(!at||!bt)return false;
+  const ah=typeof at.hour==='number'?at.hour:null;
+  const bh=typeof bt.hour==='number'?bt.hour:null;
+  if(ah!==bh)return false;
+  const am=typeof at.minute==='number'?at.minute:null;
+  const bm=typeof bt.minute==='number'?bt.minute:null;
+  return am===bm;
+}
+function updateReservationDisplay(){
+  if(ui&&typeof ui.updateReservationInfo==='function'){
+    ui.updateReservationInfo({
+      current:initialReservationDisplay,
+      attempt:attemptReservationDisplay
+    });
+  }
+}
+function setCurrentReservationDisplay(info){
+  const next=cloneReservationInfo(info);
+  if(reservationInfoEquals(initialReservationDisplay,next))return;
+  initialReservationDisplay=next;
+  updateReservationDisplay();
+}
+function setAttemptReservationDisplay(info){
+  const next=cloneReservationInfo(info);
+  if(reservationInfoEquals(attemptReservationDisplay,next))return;
+  attemptReservationDisplay=next;
+  updateReservationDisplay();
+}
+function notifyInitialReservation(){
+  if(!initialSelectionState.dateISO)return;
+  setCurrentReservationDisplay({
+    iso:initialSelectionState.dateISO,
+    slotKey:initialSelectionState.slotKey||null,
+    slotTime:initialSelectionState.slotTime||null
+  });
+}
 function keepAliveRemainingSeconds(){
   if(!state.keepAlive||KeepAliveNextAt===null)return null;
   const diff=Math.floor((KeepAliveNextAt-Date.now())/1000);
@@ -297,21 +359,17 @@ function checkAutoSwitch(now){
 /* ========= セレクタ ========= */
 const SEL_SUCC='h2#reservation_modal_title',SEL_FAIL='h2#reservation_fail_modal_title';
 
-/* ========= 強制リロード回数管理 ========= */
-const FORCED_RELOAD_KEY='nr_forced_reload_v1';
-function minuteBucket(now){const t=now instanceof Date?now.getTime():Number(now);if(!Number.isFinite(t))return 0;return Math.floor(t/60000)}
-function readForcedReloadState(){try{const raw=sessionStorage.getItem(FORCED_RELOAD_KEY);if(!raw)return{minute:0,count:0};const parsed=JSON.parse(raw);const minute=Number(parsed?.minute);const count=Number(parsed?.count);return{minute:Number.isFinite(minute)?minute:0,count:Number.isFinite(count)?count:0}}catch{return{minute:0,count:0}}}
-function writeForcedReloadState(minute,count){try{const safeMinute=Number.isFinite(minute)?minute:0;const safeCount=Number.isFinite(count)?count:0;sessionStorage.setItem(FORCED_RELOAD_KEY,JSON.stringify({minute:safeMinute,count:safeCount}))}catch{}}
-function getForcedReloadState(now){const bucket=minuteBucket(now??serverNow());const current=readForcedReloadState();if(bucket>0&&current.minute!==bucket){writeForcedReloadState(bucket,0);return{minute:bucket,count:0}}if(current.minute===0&&bucket>0){writeForcedReloadState(bucket,current.count||0);return{minute:bucket,count:current.count||0}}return current}
-function incrementForcedReload(now){const bucket=minuteBucket(now??serverNow());const state=getForcedReloadState(now);const minute=state.minute||bucket;const baseCount=Number.isFinite(state.count)?state.count:0;const nextCount=baseCount>=3?baseCount:baseCount+1;writeForcedReloadState(minute,nextCount);return nextCount}
-function resetForcedReload(now){const bucket=minuteBucket(now??serverNow());writeForcedReloadState(bucket,0)}
-
 /* ========= 失敗トースト → 強制リロード（最大3回） ========= */
 const FAIL_KEY='nr_fail_r';
 function getFail(){return +(sessionStorage.getItem(FAIL_KEY)||'0')}
 function setFail(n){sessionStorage.setItem(FAIL_KEY,n)}
 function resetFail(){setFail(0);resetForcedReload()}
 let __reloading=false,__reloadStamp=0;
+const FORCE_SCAN_KEY='nr_force_scan_count';
+function getForceScanCount(){const v=+(sessionStorage.getItem(FORCE_SCAN_KEY)||'0');return Number.isFinite(v)&&v>0?Math.floor(v):0}
+function setForceScanCount(n){const v=Math.max(0,Math.floor(Number(n)||0));sessionStorage.setItem(FORCE_SCAN_KEY,String(v))}
+function ensureForceScanAtLeast(n){const current=getForceScanCount();if(n>current)setForceScanCount(n)}
+function consumeForceScan(){const current=getForceScanCount();if(current>0){setForceScanCount(current-1);return true;}return false;}
 function robustReload(){
   if(__reloading)return;
   const n=getFail(); if(n>=3)return;
@@ -335,7 +393,7 @@ function hasFailToast(){
 }
 ;(function armFastFailReload(){
   let armed=false;
-  const kick=()=>{if(armed)return;armed=true;setTimeout(()=>{if(hasFailToast())robustReload()},500)};
+  const kick=()=>{if(armed)return;armed=true;robustReload()};
   const mo=new MutationObserver(muts=>{
     for(const m of muts){
       if(m.type==='childList'){
@@ -350,6 +408,17 @@ function hasFailToast(){
   });
   mo.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-hidden','aria-modal']});
   if(hasFailToast()) kick();
+})();
+
+;(function detectManualReload(){
+  try{
+    const entries=performance.getEntriesByType?.('navigation');
+    const navEntry=entries&&entries.length?entries[0]:null;
+    const type=navEntry?navEntry.type:((performance.navigation&&performance.navigation.type===1)?'reload':null);
+    if(type==='reload'){
+      ensureForceScanAtLeast(1);
+    }
+  }catch{}
 })();
 
 /* ========= カレンダー/日付/スロット ========= */
@@ -432,6 +501,42 @@ function getCellByISO(iso){
 }
 function cellIsSelected(cell){return !!cell&&cell.getAttribute('aria-pressed')==='true'}
 function selectedDateISO(){const sel=A('.style_selector_item__9RWJw[aria-pressed="true"] time[datetime]').find(Boolean);return sel?.getAttribute('datetime')||null}
+const initialSelectionState={captured:false,dateISO:null,slotKey:null,slotTime:null,dateReselected:false,slotReselected:false};
+function captureInitialSelection(){
+  const prevCaptured=initialSelectionState.captured;
+  if(!prevCaptured){
+    initialSelectionState.captured=true;
+  }
+  let updated=false;
+  if(!initialSelectionState.dateReselected){
+    const isoSafe=()=>{try{return selectedDateISO()}catch{return null}};
+    if(!initialSelectionState.dateISO){
+      const iso=isoSafe();
+      if(iso){initialSelectionState.dateISO=iso;updated=true;}
+    }
+  }
+  if(!initialSelectionState.slotReselected){
+    const infoSafe=()=>{try{return getSelectedSlotInfo()}catch{return null}};
+    const info=infoSafe();
+    if(info){
+      if(!initialSelectionState.slotKey&&info.key){
+        initialSelectionState.slotKey=info.key;
+        initialSelectionState.slotTime=info.time||null;
+        updated=true;
+      }else if(initialSelectionState.slotKey&&initialSelectionState.slotKey===info.key&&initialSelectionState.slotTime===null&&info.time){
+        initialSelectionState.slotTime=info.time;
+        updated=true;
+      }
+    }
+  }
+  if(updated){
+    notifyInitialReservation();
+  }
+}
+function needsDateReselect(iso){return !!iso&&initialSelectionState.captured&&!initialSelectionState.dateReselected&&initialSelectionState.dateISO===iso;}
+function needsSlotReselect(key){return !!key&&initialSelectionState.captured&&!initialSelectionState.slotReselected&&initialSelectionState.slotKey===key;}
+function markDateReselected(){if(initialSelectionState.captured&&!initialSelectionState.dateReselected)initialSelectionState.dateReselected=true;}
+function markSlotReselected(){if(initialSelectionState.captured&&!initialSelectionState.slotReselected)initialSelectionState.slotReselected=true;}
 function isDateCellEnabled(cell){
   if(!cell||!vis(cell))return false;
   if(cell.classList.contains('style_selector_item_disabled__iSIA2'))return false;
@@ -442,19 +547,32 @@ function isDateCellEnabled(cell){
 }
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
+  captureInitialSelection();
   const already=selectedDateISO();
-  if(already===iso){const c=getCellByISO(iso);return cellIsSelected(c)}
+  if(already===iso){
+    const cellExisting=getCellByISO(iso);
+    if(needsDateReselect(iso)&&cellExisting){
+      try{cellExisting.scrollIntoView({block:'center',behavior:'instant'})}catch{}
+      [cellExisting,cellExisting.querySelector('time'),cellExisting.querySelector('div')].filter(Boolean).forEach(t=>KC(t));
+      await waitUntil(()=>{const c=getCellByISO(iso);return c&&cellIsSelected(c)?c:null},{timeout:600,attrs:['aria-pressed','class']});
+      markDateReselected();
+    }else if(needsDateReselect(iso)&&!cellExisting){
+      markDateReselected();
+    }
+    return cellIsSelected(cellExisting);
+  }
   let cell=getCellByISO(iso);
   if(!cell||!isDateCellEnabled(cell)) return false;
   try{cell.scrollIntoView({block:'center',behavior:'instant'})}catch{}
   const promise=waitUntil(()=>{const c=getCellByISO(iso);return(c&&cellIsSelected(c))?c:null},{timeout,attrs:['aria-pressed','class']});
   [cell,cell.querySelector('time'),cell.querySelector('div')].filter(Boolean).forEach(t=>KC(t));
-  const ok=await promise; if(ok)return true;
+  const ok=await promise; if(ok){markDateReselected();return true;}
   cell=getCellByISO(iso);
   if(cell&&isDateCellEnabled(cell)){
     KC(cell);KC(cell.querySelector('time'));KC(cell.querySelector('div'));
     const ok2=await waitUntil(()=>{const c=getCellByISO(iso);return(c&&cellIsSelected(c))?c:null},{timeout:2000,attrs:['aria-pressed','class']});
-    return !!ok2;
+    if(ok2){markDateReselected();return true;}
+    return false;
   }
   return false;
 }
@@ -528,37 +646,99 @@ function collectSlotElements(){
   }
   return merged;
 }
-function getSelectedSlotKey(){
+function getSelectedSlotInfo(){
   const slots=collectSlotElements();
   for(const el of slots){
     if(slotElementSelected(el)){
       const key=slotElementKey(el);
-      if(key)return key;
+      if(key){
+        return{key,time:extractSlotTime(el)||null,element:slotElementRoot(el)};
+      }
     }
   }
   return null;
 }
+function getSelectedSlotKey(){
+  const info=getSelectedSlotInfo();
+  return info?info.key:null;
+}
+function findSlotElementsByKey(key){
+  if(!key)return[];
+  const slots=collectSlotElements();
+  return slots.filter(el=>slotElementKey(el)===key);
+}
+function firstEnabledSlotByKey(key){
+  if(!key)return null;
+  const candidates=findSlotElementsByKey(key);
+  if(!candidates.length)return null;
+  for(const el of candidates){
+    if(isEnabled(el))return el;
+    const root=slotElementRoot(el);
+    if(root&&isEnabled(root))return root;
+  }
+  return candidates[0]||null;
+}
+try{captureInitialSelection();}catch{}
 async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
   if(!targetKey)return false;
+  captureInitialSelection();
+  const requireReselect=needsSlotReselect(targetKey);
+  let reselectAttempted=false;
   for(let attempt=0;attempt<=retries;attempt++){
     const current=getSelectedSlotKey();
-    if(current===targetKey)return true;
-    const slot=firstEnabledSlot([targetKey]);
-    if(!slot){
-      const waited=await waitFirstEnabledSlot([targetKey],timeout);
-      if(!waited)return false;
-      KC(waited);
+    if(current===targetKey){
+      if(requireReselect&&!reselectAttempted){
+        reselectAttempted=true;
+        const matches=findSlotElementsByKey(targetKey);
+        const match=matches.find(isEnabled)||matches[0];
+        if(match){
+          KC(match);
+          await waitUntil(()=>slotElementSelected(match)?true:null,{
+            timeout:Math.max(600,timeout),
+            interval:80,
+            attrs:['aria-pressed','class','data-selected']
+          });
+        }
+        markSlotReselected();
+        if(getSelectedSlotKey()===targetKey)return true;
+        continue;
+      }
+      markSlotReselected();
+      return true;
+    }
+    const targetCandidate=firstEnabledSlotByKey(targetKey);
+    if(targetCandidate){
+      KC(targetCandidate);
     }else{
-      KC(slot);
+      const slot=firstEnabledSlot([targetKey]);
+      if(!slot){
+        const waited=await waitFirstEnabledSlot([targetKey],timeout+attempt*200);
+        if(!waited)return false;
+        KC(waited);
+      }else{
+        KC(slot);
+      }
     }
     const ok=await waitUntil(()=>getSelectedSlotKey()===targetKey?true:null,{
       timeout:timeout+attempt*200,
       interval:80,
       attrs:['aria-pressed','class','data-selected']
     });
-    if(ok)return true;
+    if(ok){markSlotReselected();return true;}
   }
-  return getSelectedSlotKey()===targetKey;
+  const fallback=firstEnabledSlotByKey(targetKey);
+  if(fallback){
+    KC(fallback);
+    const ok=await waitUntil(()=>getSelectedSlotKey()===targetKey?true:null,{
+      timeout:Math.max(600,timeout),
+      interval:80,
+      attrs:['aria-pressed','class','data-selected']
+    });
+    if(ok){markSlotReselected();return true;}
+  }
+  const finalKey=getSelectedSlotKey();
+  if(finalKey===targetKey){markSlotReselected();return true;}
+  return false;
 }
 async function ensurePreferredSlotSelection({targetKey,allowedKeys,timeout=1800,retries=2}={}){
   const normalized=normalizeTimeKeys(Array.isArray(allowedKeys)?allowedKeys:[]);
@@ -569,6 +749,43 @@ async function ensurePreferredSlotSelection({targetKey,allowedKeys,timeout=1800,
     return normalized.includes(current||'');
   }
   return await ensureSlotSelectionByKey(key,{timeout,retries});
+}
+function startSlotSelectionGuard({targetKey,allowedKeys,onChange,checkInterval=160}={}){
+  const key=targetKey||null;
+  if(!key)return()=>{};
+  const normalized=normalizeTimeKeys(Array.isArray(allowedKeys)?allowedKeys:[]);
+  let disposed=false;
+  let reselecting=false;
+  const emitChange=()=>{
+    if(typeof onChange==='function'){
+      try{onChange(getSelectedSlotInfo());}catch{}
+    }
+  };
+  const shouldReselect=()=>{
+    if(disposed||reselecting)return;
+    const slots=collectSlotElements();
+    if(!slots.length)return;
+    const current=getSelectedSlotKey();
+    if(current===key)return;
+    if(normalized.length&&current&&normalized.includes(current)){
+      // current is another allowed key but not the desired one; continue to reselect
+    }
+    const targetExists=slots.some(el=>slotElementKey(el)===key);
+    if(!targetExists)return;
+    reselecting=true;
+    ensureSlotSelectionByKey(key,{timeout:800,retries:0}).then(()=>{
+      emitChange();
+    }).catch(()=>{}).finally(()=>{reselecting=false;});
+  };
+  const mo=new MutationObserver(()=>{shouldReselect();});
+  try{mo.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class','aria-pressed','data-selected','disabled','data-disabled','aria-disabled']});}catch{}
+  const iv=setInterval(()=>{shouldReselect();},checkInterval);
+  emitChange();
+  return()=>{
+    disposed=true;
+    try{mo.disconnect();}catch{}
+    clearInterval(iv);
+  };
 }
 function isEnabled(el){
   if(!el||!vis(el))return false;
@@ -904,6 +1121,7 @@ async function showMonthForISO(iso){
 /* ========= 1日分の試行 ========= */
 async function tryOnceForDate(d){
   const iso=isoOf(d);
+  setAttemptReservationDisplay({iso});
   const calOK=await waitCalendarReady(5000);
   if(!calOK) return 'none';
 
@@ -923,6 +1141,8 @@ async function tryOnceForDate(d){
 
   KC(slot);
   const slotKey=slotElementKey(slot);
+  const slotTime=extractSlotTime(slotElementRoot(slot)||slot)||null;
+  setAttemptReservationDisplay({iso,slotKey,slotTime});
   const slotEnsured=await ensurePreferredSlotSelection({
     targetKey:slotKey,
     allowedKeys:activeTimes,
@@ -930,16 +1150,38 @@ async function tryOnceForDate(d){
     retries:3
   });
   if(!slotEnsured) return 'none';
+  const selectedInfo=getSelectedSlotInfo();
+  if(selectedInfo&&selectedInfo.key){
+    setAttemptReservationDisplay({iso,slotKey:selectedInfo.key,slotTime:selectedInfo.time||null});
+  }
   if(selectedDateISO()!==iso) return 'none';
 
-  const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
-  if(confirmResult==='typeSelect') return 'typeSelect';
-  if(confirmResult!=='clicked') return 'none';
-  const o=await waitOutcome(12000);
-  if(o==='typeSelect') return 'typeSelect';
-  if(o==='ok') return 'ok';
-  if(o==='ng') return 'ng';
-  return 'none';
+  const guardTargetKey=getSelectedSlotKey()||slotKey;
+  const stopGuard=guardTargetKey?startSlotSelectionGuard({
+    targetKey:guardTargetKey,
+    allowedKeys:activeTimes,
+    onChange:info=>{
+      if(!info||!info.key){
+        setAttemptReservationDisplay({iso,slotKey:guardTargetKey||null,slotTime:null});
+        return;
+      }
+      setAttemptReservationDisplay({iso,slotKey:info.key,slotTime:info.time||null});
+    }
+  }):null;
+  try{
+    const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
+    if(confirmResult==='typeSelect') return 'typeSelect';
+    if(confirmResult!=='clicked') return 'none';
+    const o=await waitOutcome(12000);
+    if(o==='typeSelect') return 'typeSelect';
+    if(o==='ok') return 'ok';
+    if(o==='ng'){ensureForceScanAtLeast(2);return 'ng';}
+    return 'none';
+  }finally{
+    if(typeof stopGuard==='function'){
+      try{stopGuard();}catch{}
+    }
+  }
 }
 
 /* ========= サーバ時刻＆タイミング ========= */
@@ -948,16 +1190,26 @@ async function syncServer(){try{const res=await fetch(location.origin+'/',{metho
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+const FORCED_RELOAD_KEY='nr_forced_reload_v1';
+function minuteBucket(now){const t=now instanceof Date?now.getTime():Number(now);if(!Number.isFinite(t))return 0;return Math.floor(t/60000)}
+function readForcedReloadState(){try{const raw=sessionStorage.getItem(FORCED_RELOAD_KEY);if(!raw)return{minute:0,count:0};const parsed=JSON.parse(raw);const minute=Number(parsed?.minute);const count=Number(parsed?.count);return{minute:Number.isFinite(minute)?minute:0,count:Number.isFinite(count)?count:0}}catch{return{minute:0,count:0}}}
+function writeForcedReloadState(minute,count){try{const safeMinute=Number.isFinite(minute)?minute:0;const safeCount=Number.isFinite(count)?count:0;sessionStorage.setItem(FORCED_RELOAD_KEY,JSON.stringify({minute:safeMinute,count:safeCount}))}catch{}}
+function getForcedReloadState(now){const bucket=minuteBucket(now??serverNow());const current=readForcedReloadState();if(bucket>0&&current.minute!==bucket){writeForcedReloadState(bucket,0);return{minute:bucket,count:0}}if(current.minute===0&&bucket>0){writeForcedReloadState(bucket,current.count||0);return{minute:bucket,count:current.count||0}}return current}
+function incrementForcedReload(now){const bucket=minuteBucket(now??serverNow());const state=getForcedReloadState(now);const minute=state.minute||bucket;const baseCount=Number.isFinite(state.count)?state.count:0;const nextCount=baseCount>=3?baseCount:baseCount+1;writeForcedReloadState(minute,nextCount);return nextCount}
+function resetForcedReload(now){const bucket=minuteBucket(now??serverNow());writeForcedReloadState(bucket,0)}
 function scheduleRetryOrNextMinute(){
+  if(!state.r){
+    resetForcedReload();
+    return;
+  }
   const now=serverNow();
   const sec=now.getSeconds()+now.getMilliseconds()/1000;
   const forcedState=getForcedReloadState(now);
   if(sec<53&&forcedState.count<3){
-    if(state.r){
-      ui.setStatus('再試行中');
-      incrementForcedReload(now);
-      safeReload();
-    }
+    ui.setStatus('再試行中');
+    clearTimeout(Tm);
+    incrementForcedReload(now);
+    safeReload();
     return;
   }
   const d=delayUntilNextMinute_43s();
@@ -972,7 +1224,7 @@ ui=(()=>{const w=document.createElement('div');
 Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});
 const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};
 const rTop=row();
-const title=document.createElement('div');title.textContent='自動新規予約・変更';title.style.fontWeight='bold';
+const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';
 const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;
 rTop.appendChild(title);rTop.appendChild(tg);
 const keepRow=row();
@@ -1041,7 +1293,14 @@ rDates.appendChild(labD);rDates.appendChild(addWrap);
 const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});
 const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.keepAlive?keepAliveStatusText():(state.r?'稼働中':'停止中');
 let lastStatusText=stat.textContent;
-  w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rTimePref);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);
+const infoWrap=document.createElement('div');
+Object.assign(infoWrap.style,{fontSize:'11px',marginTop:'6px',lineHeight:'1.4'});
+const attemptInfo=document.createElement('div');
+const labelTextStyle='color:#333;';
+attemptInfo.style.cssText=labelTextStyle;
+infoWrap.appendChild(attemptInfo);
+attemptInfo.textContent='変更先候補: 未設定';
+  w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rTimePref);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);w.appendChild(infoWrap);
 document.body.appendChild(w);
 AutoToggleEl=tg;KeepAliveToggleEl=keepToggle;SwitchCheckEl=switchCheck;SwitchTimeInputEl=timeInput;
 function setClock(s){tm.textContent=s}
@@ -1049,8 +1308,8 @@ function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+p
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
-  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
-  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
+  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;resetForcedReload();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;resetForcedReload();saveState();setAttemptReservationDisplay(null);clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;resetForcedReload();setAttemptReservationDisplay(null);if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
   switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;const parsed=parseSwitchTimeString(state.switchTime);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{let changed=false;if(state.switchEnabled){state.switchEnabled=false;changed=true;}if(state.switchNextAt!==0){state.switchNextAt=0;changed=true;}if(changed)saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
   timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{if(state.switchEnabled&&v){const parsed=parseSwitchTimeString(v);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}}else if(!state.switchEnabled&&state.switchNextAt!==0){state.switchNextAt=0;}saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
 function setStatus(x){if(lastStatusText!==x){lastStatusText=x;stat.textContent=x;}}
@@ -1058,7 +1317,35 @@ function updateKeepAliveCountdown(){if(!state.keepAlive)return;const msg=keepAli
 function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}const txt=state.keepAlive?keepAliveStatusText():'停止中';stat.textContent=txt;lastStatusText=txt}
 (async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{const now=serverNow();setClock(fmtClock(now));if(state.keepAlive)updateKeepAliveCountdownDisplay();checkAutoSwitch(now)},250);checkAutoSwitch(serverNow())})().catch(()=>{});
   if(!conf.times.length&&!state.keepAlive&&lastStatusText!=='時間帯を選択してください'){updateTimeSelectionStatus();}
-  return{setStatus,uncheck,updateKeepAliveCountdown}})();
+  function formatIsoDate(iso){
+    if(!iso)return '';
+    const m=String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(!m)return iso;
+    return `${m[1]}/${m[2]}/${m[3]}`;
+  }
+  function formatTimePart(info){
+    if(info&&info.slotTime&&typeof info.slotTime.hour==='number'){
+      const h=('0'+info.slotTime.hour).slice(-2);
+      const m=typeof info.slotTime.minute==='number'?('0'+info.slotTime.minute).slice(-2):'00';
+      return `${h}:${m}`;
+    }
+    if(info&&info.slotKey){
+      const choice=TIME_CHOICES.find(opt=>opt.key===info.slotKey);
+      if(choice)return choice.label;
+    }
+    return '';
+  }
+  function formatReservationText(prefix,info){
+    if(!info||!info.iso)return `${prefix}: なし`;
+    const dateText=formatIsoDate(info.iso);
+    const timeText=formatTimePart(info);
+    return `${prefix}: ${dateText}${timeText?` ${timeText}`:''}`;
+  }
+  function updateReservationInfo({current,attempt}){
+    attemptInfo.textContent=formatReservationText('変更先候補',attempt);
+  }
+  updateReservationInfo({current:initialReservationDisplay,attempt:attemptReservationDisplay});
+  return{setStatus,uncheck,updateKeepAliveCountdown,updateReservationInfo}})();
 
 
 
@@ -1069,14 +1356,7 @@ if(state.keepAlive){
 }
 
 /* ========= メイン ========= */
-function stopOK(msg){
-  try{clearTimeout(Tm)}catch{}
-  state.r=false;
-  saveState();
-  resetForcedReload();
-  ui.uncheck();
-  if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}
-}
+function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;resetForcedReload();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
@@ -1084,8 +1364,9 @@ async function runCycle(){
   if(succModal&&isShown(succModal)){resetFail();stopOK();return}
   const failModal=Q(SEL_FAIL);
   if(failModal&&isShown(failModal)){return}
-  if(!state.r)return;
-  if(state.keepAlive){ui.setStatus(keepAliveStatusText());return;}
+  if(!state.r){setAttemptReservationDisplay(null);return;}
+  if(state.keepAlive){setAttemptReservationDisplay(null);ui.setStatus(keepAliveStatusText());return;}
+  setAttemptReservationDisplay(null);
 
   const activeTimes=getActiveTimeKeys();
   if(!activeTimes.length){
@@ -1094,22 +1375,27 @@ async function runCycle(){
     return;
   }
 
+  const forceScanActive=consumeForceScan();
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<43){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
-  }
+  if(!forceScanActive){
+    if(sec<43){
+      resetForcedReload();
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('待機中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
+      return;
+    }
 
-  if(sec>=53){
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('再試行中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    return;
+    if(sec>=53){
+      resetForcedReload();
+      const d=delayUntilNextMinute_43s();
+      ui.setStatus('再試行中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
+      return;
+    }
   }
 
   ui.setStatus('空き枠探索中');
@@ -1149,13 +1435,14 @@ async function runCycle(){
     const r=await tryOnceForDate(d);
     if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
     if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');return}
-    if(r==='ng'){ui.setStatus('再試行中');break}
+    if(r==='ng'){ensureForceScanAtLeast(2);ui.setStatus('再試行中');break}
   }
 
+  resetForcedReload();
   const d=delayUntilNextMinute_43s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
-  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+  Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
 }
 
 if(state.r&&!state.keepAlive)runCycle();
