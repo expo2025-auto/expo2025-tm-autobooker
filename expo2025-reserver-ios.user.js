@@ -381,20 +381,28 @@ function hasFailToast(){
 ;(function armFastFailReload(){
   let armed=false;
   const kick=()=>{if(armed)return;armed=true;robustReload()};
+  const considerKick=()=>{if(armed)return false;if(!hasFailToast())return false;kick();return true;};
+  const relatedToFailToast=el=>{
+    if(!el||el.nodeType!==1)return false;
+    if(el.id==='reservation_fail_modal_title')return true;
+    if(el.matches?.('.ReactModal__Content,.style_modal__ZpsOM,#reservation_fail_modal_title'))return true;
+    if(el.classList?.contains('style_buy-modal__1JZtS'))return true;
+    if(el.querySelector?.('#reservation_fail_modal_title'))return true;
+    return false;
+  };
   const mo=new MutationObserver(muts=>{
     for(const m of muts){
       if(m.type==='childList'){
         for(const n of m.addedNodes){
-          if(n.nodeType===1&&(n.querySelector?.('#reservation_fail_modal_title')||n.matches?.('#reservation_fail_modal_title,.style_modal__ZpsOM,.ReactModal__Content'))) return kick();
+          if(relatedToFailToast(n)&&considerKick()) return;
         }
       }else if(m.type==='attributes'){
-        const el=m.target;
-        if(el.id==='reservation_fail_modal_title'||el.classList?.contains('ReactModal__Content')||el.classList?.contains('style_modal__ZpsOM')) return kick();
+        if(relatedToFailToast(m.target)&&considerKick()) return;
       }
     }
   });
   mo.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-hidden','aria-modal']});
-  if(hasFailToast()) kick();
+  considerKick();
 })();
 
 ;(function detectManualReload(){
