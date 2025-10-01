@@ -615,14 +615,40 @@ async function flowConfirm(targetISO,{targetTimeKey,allowedTimeKeys}={}){
     'div[role="status"] button.style_next_button__N_pbs',
     'div[role="status"] button[data-message-code="SW_GP_DL_117_0413"]',
     'div[role="status"] button',
+    'div[role="status"] a',
+    'div[aria-live="assertive"] button',
+    'div[aria-live="polite"] button',
+    'div[aria-live] a',
+    'div[role="alert"] button',
+    'div[role="alert"] a',
     'div[class*="toast"] button.style_next_button__N_pbs',
     'div[class*="toast"] button',
+    'div[class*="toast"] a',
+    'div[data-testid*="toast"] button',
+    'div[data-testid*="toast"] a',
+    'div[data-type*="toast"] button',
+    'div[data-type*="toast"] a',
     'button.style_next_button__N_pbs',
     'button[data-message-code="SW_GP_DL_117_0413"]'
   ];
   const confirmTextHints=['来場日時を設定する','来場日時を設定','日時を設定','日時設定'];
   const setDateTextHints=['来場日時を設定する','来場日時を設定'];
-  const changeTextHints=['来場日時を変更する','来場日時を変更'];
+  const changeTextHints=[
+    '来場日時を変更する',
+    '来場日時を変更',
+    '来場日時の変更を続ける',
+    '来場日時を再設定する',
+    '来場日時の再設定',
+    '来場日時を更新する',
+    '予約内容を変更する',
+    '予約変更を続ける',
+    '予約変更手続きを続ける',
+    '予約変更に進む',
+    '変更手続きを続ける',
+    '変更手続きへ',
+    '変更を続ける',
+    '変更を進める'
+  ];
   const normalizedTextOf=el=>{
     const values=[];
     if(el.textContent)values.push(el.textContent);
