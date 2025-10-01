@@ -599,17 +599,17 @@ let serverOffset=0;
 async function syncServer(){try{const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});const dh=res.headers.get('date');if(dh){const sv=new Date(dh).getTime();serverOffset=sv-Date.now()}}catch{}}
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
-function delayUntilNextMinute_13s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(13,0);if(n.getSeconds()>13||(n.getSeconds()===13&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function delayUntilNextMinute_10s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(10,0);if(n.getSeconds()>10||(n.getSeconds()===10&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 function scheduleRetryOrNextMinute(){
   const sec=secondsInMinute();
-  if(sec<23){
+  if(sec<20){
     if(state.r){
-      ui.setStatus('即再読込（<23s）');
+      ui.setStatus('即再読込（<20s）');
       safeReload();
     }
   }else{
-    const d=delayUntilNextMinute_13s();
-    ui.setStatus('次: →13s (+'+(Math.round(d/100)/10)+'s)');
+    const d=delayUntilNextMinute_10s();
+    ui.setStatus('次: →10s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
   }
@@ -823,17 +823,17 @@ async function runCycle(){
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<13){
-    const d=delayUntilNextMinute_13s();
-    ui.setStatus('待機: →13s (+'+(Math.round(d/100)/10)+'s)');
+  if(sec<10){
+    const d=delayUntilNextMinute_10s();
+    ui.setStatus('待機: →10s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
   }
 
-  if(sec>=23){
-    const d=delayUntilNextMinute_13s();
-    ui.setStatus('枠外: →13s (+'+(Math.round(d/100)/10)+'s)');
+  if(sec>=20){
+    const d=delayUntilNextMinute_10s();
+    ui.setStatus('枠外: →10s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
@@ -875,8 +875,8 @@ async function runCycle(){
     if(r==='ng'){ui.setStatus('押し負け→継続');break}
   }
 
-  const d=delayUntilNextMinute_13s();
-  ui.setStatus('次: →13s (+'+(Math.round(d/100)/10)+'s)');
+  const d=delayUntilNextMinute_10s();
+  ui.setStatus('次: →10s (+'+(Math.round(d/100)/10)+'s)');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
 }
