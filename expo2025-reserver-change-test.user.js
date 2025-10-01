@@ -750,6 +750,43 @@ async function ensurePreferredSlotSelection({targetKey,allowedKeys,timeout=1800,
   }
   return await ensureSlotSelectionByKey(key,{timeout,retries});
 }
+function startSlotSelectionGuard({targetKey,allowedKeys,onChange,checkInterval=160}={}){
+  const key=targetKey||null;
+  if(!key)return()=>{};
+  const normalized=normalizeTimeKeys(Array.isArray(allowedKeys)?allowedKeys:[]);
+  let disposed=false;
+  let reselecting=false;
+  const emitChange=()=>{
+    if(typeof onChange==='function'){
+      try{onChange(getSelectedSlotInfo());}catch{}
+    }
+  };
+  const shouldReselect=()=>{
+    if(disposed||reselecting)return;
+    const slots=collectSlotElements();
+    if(!slots.length)return;
+    const current=getSelectedSlotKey();
+    if(current===key)return;
+    if(normalized.length&&current&&normalized.includes(current)){
+      // current is another allowed key but not the desired one; continue to reselect
+    }
+    const targetExists=slots.some(el=>slotElementKey(el)===key);
+    if(!targetExists)return;
+    reselecting=true;
+    ensureSlotSelectionByKey(key,{timeout:800,retries:0}).then(()=>{
+      emitChange();
+    }).catch(()=>{}).finally(()=>{reselecting=false;});
+  };
+  const mo=new MutationObserver(()=>{shouldReselect();});
+  try{mo.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class','aria-pressed','data-selected','disabled','data-disabled','aria-disabled']});}catch{}
+  const iv=setInterval(()=>{shouldReselect();},checkInterval);
+  emitChange();
+  return()=>{
+    disposed=true;
+    try{mo.disconnect();}catch{}
+    clearInterval(iv);
+  };
+}
 function isEnabled(el){
   if(!el||!vis(el))return false;
   if(el.disabled)return false;
@@ -1119,14 +1156,32 @@ async function tryOnceForDate(d){
   }
   if(selectedDateISO()!==iso) return 'none';
 
-  const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
-  if(confirmResult==='typeSelect') return 'typeSelect';
-  if(confirmResult!=='clicked') return 'none';
-  const o=await waitOutcome(12000);
-  if(o==='typeSelect') return 'typeSelect';
-  if(o==='ok') return 'ok';
-  if(o==='ng'){ensureForceScanAtLeast(2);return 'ng';}
-  return 'none';
+  const guardTargetKey=getSelectedSlotKey()||slotKey;
+  const stopGuard=guardTargetKey?startSlotSelectionGuard({
+    targetKey:guardTargetKey,
+    allowedKeys:activeTimes,
+    onChange:info=>{
+      if(!info||!info.key){
+        setAttemptReservationDisplay({iso,slotKey:guardTargetKey||null,slotTime:null});
+        return;
+      }
+      setAttemptReservationDisplay({iso,slotKey:info.key,slotTime:info.time||null});
+    }
+  }):null;
+  try{
+    const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
+    if(confirmResult==='typeSelect') return 'typeSelect';
+    if(confirmResult!=='clicked') return 'none';
+    const o=await waitOutcome(12000);
+    if(o==='typeSelect') return 'typeSelect';
+    if(o==='ok') return 'ok';
+    if(o==='ng'){ensureForceScanAtLeast(2);return 'ng';}
+    return 'none';
+  }finally{
+    if(typeof stopGuard==='function'){
+      try{stopGuard();}catch{}
+    }
+  }
 }
 
 /* ========= サーバ時刻＆タイミング ========= */
