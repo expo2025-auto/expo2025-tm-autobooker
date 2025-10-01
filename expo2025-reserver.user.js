@@ -570,7 +570,15 @@ async function ensureDate(iso,timeout=8000){
     return cellIsSelected(cellExisting);
   }
   let cell=getCellByISO(iso);
-  if(!cell||!isDateCellEnabled(cell)) return false;
+  if(!cell) return false;
+  if(!isDateCellEnabled(cell)){
+    const enabled=await waitUntil(()=>{
+      const current=getCellByISO(iso);
+      return current&&isDateCellEnabled(current)?current:null;
+    },{timeout,interval:80,attrs:['class','aria-disabled','data-disabled']});
+    if(!enabled) return false;
+    cell=enabled;
+  }
   try{cell.scrollIntoView({block:'center',behavior:'instant'})}catch{}
   const promise=waitUntil(()=>{const c=getCellByISO(iso);return(c&&cellIsSelected(c))?c:null},{timeout,attrs:['aria-pressed','class']});
   [cell,cell.querySelector('time'),cell.querySelector('div')].filter(Boolean).forEach(t=>KC(t));
