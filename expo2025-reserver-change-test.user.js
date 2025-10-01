@@ -148,12 +148,14 @@ conf.times=normalizeTimeKeys(conf.times);
 Lset(CONF_KEY,conf);
 let stateRaw=Sget(STATE_KEY);
 if(typeof stateRaw!=='object'||!stateRaw){stateRaw={}};
-let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:'',switchNextAt:0},stateRaw);
+let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:'',switchNextAt:0,retryMinuteKey:'',retryReloads:0},stateRaw);
 if(typeof state.r!=='boolean')state.r=false;
 if(typeof state.keepAlive!=='boolean')state.keepAlive=false;
 if(typeof state.switchEnabled!=='boolean')state.switchEnabled=false;
 if(typeof state.switchTime!=='string')state.switchTime='';
 if(typeof state.switchNextAt!=='number'||!Number.isFinite(state.switchNextAt))state.switchNextAt=0;
+if(typeof state.retryMinuteKey!=='string')state.retryMinuteKey='';
+if(typeof state.retryReloads!=='number'||!Number.isFinite(state.retryReloads)||state.retryReloads<0)state.retryReloads=0;
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
@@ -178,6 +180,66 @@ let KeepAliveTimer=null;
 let KeepAliveNextAt=null;
 let keepAliveSwitching=false;
 function setUIStatus(msg){try{if(ui&&typeof ui.setStatus==='function')ui.setStatus(msg)}catch{}}
+let initialReservationDisplay=null;
+let attemptReservationDisplay=null;
+function cloneReservationInfo(info){
+  if(!info)return null;
+  const normalized={
+    iso:info.iso||null,
+    slotKey:info.slotKey||null,
+    slotTime:null
+  };
+  if(info.slotTime&&typeof info.slotTime.hour==='number'){
+    normalized.slotTime={
+      hour:info.slotTime.hour,
+      minute:typeof info.slotTime.minute==='number'?info.slotTime.minute:null
+    };
+  }
+  return normalized;
+}
+function reservationInfoEquals(a,b){
+  if(!a&&!b)return true;
+  if(!a||!b)return false;
+  if(a.iso!==b.iso)return false;
+  if(a.slotKey!==b.slotKey)return false;
+  const at=a.slotTime,bt=b.slotTime;
+  if(!at&&!bt)return true;
+  if(!at||!bt)return false;
+  const ah=typeof at.hour==='number'?at.hour:null;
+  const bh=typeof bt.hour==='number'?bt.hour:null;
+  if(ah!==bh)return false;
+  const am=typeof at.minute==='number'?at.minute:null;
+  const bm=typeof bt.minute==='number'?bt.minute:null;
+  return am===bm;
+}
+function updateReservationDisplay(){
+  if(ui&&typeof ui.updateReservationInfo==='function'){
+    ui.updateReservationInfo({
+      current:initialReservationDisplay,
+      attempt:attemptReservationDisplay
+    });
+  }
+}
+function setCurrentReservationDisplay(info){
+  const next=cloneReservationInfo(info);
+  if(reservationInfoEquals(initialReservationDisplay,next))return;
+  initialReservationDisplay=next;
+  updateReservationDisplay();
+}
+function setAttemptReservationDisplay(info){
+  const next=cloneReservationInfo(info);
+  if(reservationInfoEquals(attemptReservationDisplay,next))return;
+  attemptReservationDisplay=next;
+  updateReservationDisplay();
+}
+function notifyInitialReservation(){
+  if(!initialSelectionState.dateISO)return;
+  setCurrentReservationDisplay({
+    iso:initialSelectionState.dateISO,
+    slotKey:initialSelectionState.slotKey||null,
+    slotTime:initialSelectionState.slotTime||null
+  });
+}
 function keepAliveRemainingSeconds(){
   if(!state.keepAlive||KeepAliveNextAt===null)return null;
   const diff=Math.floor((KeepAliveNextAt-Date.now())/1000);
@@ -439,12 +501,37 @@ function getCellByISO(iso){
 }
 function cellIsSelected(cell){return !!cell&&cell.getAttribute('aria-pressed')==='true'}
 function selectedDateISO(){const sel=A('.style_selector_item__9RWJw[aria-pressed="true"] time[datetime]').find(Boolean);return sel?.getAttribute('datetime')||null}
-const initialSelectionState={captured:false,dateISO:null,slotKey:null,dateReselected:false,slotReselected:false};
+const initialSelectionState={captured:false,dateISO:null,slotKey:null,slotTime:null,dateReselected:false,slotReselected:false};
 function captureInitialSelection(){
-  if(initialSelectionState.captured)return;
-  initialSelectionState.captured=true;
-  try{initialSelectionState.dateISO=selectedDateISO();}catch{initialSelectionState.dateISO=null;}
-  try{initialSelectionState.slotKey=getSelectedSlotKey();}catch{initialSelectionState.slotKey=null;}
+  const prevCaptured=initialSelectionState.captured;
+  if(!prevCaptured){
+    initialSelectionState.captured=true;
+  }
+  let updated=false;
+  if(!initialSelectionState.dateReselected){
+    const isoSafe=()=>{try{return selectedDateISO()}catch{return null}};
+    if(!initialSelectionState.dateISO){
+      const iso=isoSafe();
+      if(iso){initialSelectionState.dateISO=iso;updated=true;}
+    }
+  }
+  if(!initialSelectionState.slotReselected){
+    const infoSafe=()=>{try{return getSelectedSlotInfo()}catch{return null}};
+    const info=infoSafe();
+    if(info){
+      if(!initialSelectionState.slotKey&&info.key){
+        initialSelectionState.slotKey=info.key;
+        initialSelectionState.slotTime=info.time||null;
+        updated=true;
+      }else if(initialSelectionState.slotKey&&initialSelectionState.slotKey===info.key&&initialSelectionState.slotTime===null&&info.time){
+        initialSelectionState.slotTime=info.time;
+        updated=true;
+      }
+    }
+  }
+  if(updated){
+    notifyInitialReservation();
+  }
 }
 function needsDateReselect(iso){return !!iso&&initialSelectionState.captured&&!initialSelectionState.dateReselected&&initialSelectionState.dateISO===iso;}
 function needsSlotReselect(key){return !!key&&initialSelectionState.captured&&!initialSelectionState.slotReselected&&initialSelectionState.slotKey===key;}
@@ -559,15 +646,37 @@ function collectSlotElements(){
   }
   return merged;
 }
-function getSelectedSlotKey(){
+function getSelectedSlotInfo(){
   const slots=collectSlotElements();
   for(const el of slots){
     if(slotElementSelected(el)){
       const key=slotElementKey(el);
-      if(key)return key;
+      if(key){
+        return{key,time:extractSlotTime(el)||null,element:slotElementRoot(el)};
+      }
     }
   }
   return null;
+}
+function getSelectedSlotKey(){
+  const info=getSelectedSlotInfo();
+  return info?info.key:null;
+}
+function findSlotElementsByKey(key){
+  if(!key)return[];
+  const slots=collectSlotElements();
+  return slots.filter(el=>slotElementKey(el)===key);
+}
+function firstEnabledSlotByKey(key){
+  if(!key)return null;
+  const candidates=findSlotElementsByKey(key);
+  if(!candidates.length)return null;
+  for(const el of candidates){
+    if(isEnabled(el))return el;
+    const root=slotElementRoot(el);
+    if(root&&isEnabled(root))return root;
+  }
+  return candidates[0]||null;
 }
 try{captureInitialSelection();}catch{}
 async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
@@ -580,8 +689,8 @@ async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
     if(current===targetKey){
       if(requireReselect&&!reselectAttempted){
         reselectAttempted=true;
-        const slots=collectSlotElements();
-        const match=slots.find(el=>slotElementKey(el)===targetKey);
+        const matches=findSlotElementsByKey(targetKey);
+        const match=matches.find(isEnabled)||matches[0];
         if(match){
           KC(match);
           await waitUntil(()=>slotElementSelected(match)?true:null,{
@@ -597,16 +706,31 @@ async function ensureSlotSelectionByKey(targetKey,{timeout=1800,retries=2}={}){
       markSlotReselected();
       return true;
     }
-    const slot=firstEnabledSlot([targetKey]);
-    if(!slot){
-      const waited=await waitFirstEnabledSlot([targetKey],timeout);
-      if(!waited)return false;
-      KC(waited);
+    const targetCandidate=firstEnabledSlotByKey(targetKey);
+    if(targetCandidate){
+      KC(targetCandidate);
     }else{
-      KC(slot);
+      const slot=firstEnabledSlot([targetKey]);
+      if(!slot){
+        const waited=await waitFirstEnabledSlot([targetKey],timeout+attempt*200);
+        if(!waited)return false;
+        KC(waited);
+      }else{
+        KC(slot);
+      }
     }
     const ok=await waitUntil(()=>getSelectedSlotKey()===targetKey?true:null,{
       timeout:timeout+attempt*200,
+      interval:80,
+      attrs:['aria-pressed','class','data-selected']
+    });
+    if(ok){markSlotReselected();return true;}
+  }
+  const fallback=firstEnabledSlotByKey(targetKey);
+  if(fallback){
+    KC(fallback);
+    const ok=await waitUntil(()=>getSelectedSlotKey()===targetKey?true:null,{
+      timeout:Math.max(600,timeout),
       interval:80,
       attrs:['aria-pressed','class','data-selected']
     });
@@ -960,6 +1084,7 @@ async function showMonthForISO(iso){
 /* ========= 1日分の試行 ========= */
 async function tryOnceForDate(d){
   const iso=isoOf(d);
+  setAttemptReservationDisplay({iso});
   const calOK=await waitCalendarReady(5000);
   if(!calOK) return 'none';
 
@@ -979,6 +1104,8 @@ async function tryOnceForDate(d){
 
   KC(slot);
   const slotKey=slotElementKey(slot);
+  const slotTime=extractSlotTime(slotElementRoot(slot)||slot)||null;
+  setAttemptReservationDisplay({iso,slotKey,slotTime});
   const slotEnsured=await ensurePreferredSlotSelection({
     targetKey:slotKey,
     allowedKeys:activeTimes,
@@ -986,6 +1113,10 @@ async function tryOnceForDate(d){
     retries:3
   });
   if(!slotEnsured) return 'none';
+  const selectedInfo=getSelectedSlotInfo();
+  if(selectedInfo&&selectedInfo.key){
+    setAttemptReservationDisplay({iso,slotKey:selectedInfo.key,slotTime:selectedInfo.time||null});
+  }
   if(selectedDateISO()!==iso) return 'none';
 
   const confirmResult=await flowConfirm(iso,{targetTimeKey:slotKey,allowedTimeKeys:activeTimes});
@@ -1004,19 +1135,50 @@ async function syncServer(){try{const res=await fetch(location.origin+'/',{metho
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
-function scheduleRetryOrNextMinute(){
-  const sec=secondsInMinute();
-  if(sec<53){
-    if(state.r){
-      ui.setStatus('再試行中');
-      safeReload();
-    }
-  }else{
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+const QUICK_RETRY_LIMIT=2;
+function minuteKeyOf(date){
+  const pad=n=>('0'+n).slice(-2);
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}-${pad(date.getHours())}-${pad(date.getMinutes())}`;
+}
+function tryQuickRetryReload(now){
+  if(!state.r)return false;
+  const sec=now.getSeconds()+now.getMilliseconds()/1000;
+  if(sec>=43)return false;
+  let changed=false;
+  const key=minuteKeyOf(now);
+  if(state.retryMinuteKey!==key){
+    state.retryMinuteKey=key;
+    state.retryReloads=0;
+    changed=true;
   }
+  if(state.retryReloads>=QUICK_RETRY_LIMIT)return false;
+  state.retryReloads+=1;
+  changed=true;
+  if(changed)saveState();
+  setUIStatus('再試行中');
+  clearTimeout(Tm);
+  safeReload();
+  return true;
+}
+function resetQuickRetryTracking(){
+  if(state.retryMinuteKey!==''||state.retryReloads!==0){
+    state.retryMinuteKey='';
+    state.retryReloads=0;
+    saveState();
+  }
+}
+function scheduleRetryOrNextMinute(){
+  if(!state.r){
+    resetQuickRetryTracking();
+    return;
+  }
+  const now=serverNow();
+  if(tryQuickRetryReload(now))return;
+  resetQuickRetryTracking();
+  const d=delayUntilNextMinute_43s();
+  ui.setStatus('待機中');
+  clearTimeout(Tm);
+  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
 }
 
 /* ========= UI ========= */
@@ -1094,7 +1256,18 @@ rDates.appendChild(labD);rDates.appendChild(addWrap);
 const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});
 const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.keepAlive?keepAliveStatusText():(state.r?'稼働中':'停止中');
 let lastStatusText=stat.textContent;
-  w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rTimePref);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);
+const infoWrap=document.createElement('div');
+Object.assign(infoWrap.style,{fontSize:'11px',marginTop:'6px',lineHeight:'1.4'});
+const currentInfo=document.createElement('div');
+const attemptInfo=document.createElement('div');
+const labelTextStyle='color:#333;';
+currentInfo.style.cssText=labelTextStyle;
+attemptInfo.style.cssText=labelTextStyle;
+infoWrap.appendChild(currentInfo);
+infoWrap.appendChild(attemptInfo);
+currentInfo.textContent='現在の予約: 取得中...';
+attemptInfo.textContent='変更先候補: 未設定';
+  w.appendChild(rTop);w.appendChild(keepRow);w.appendChild(switchRow);w.appendChild(rTime);w.appendChild(rTimePref);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);w.appendChild(infoWrap);
 document.body.appendChild(w);
 AutoToggleEl=tg;KeepAliveToggleEl=keepToggle;SwitchCheckEl=switchCheck;SwitchTimeInputEl=timeInput;
 function setClock(s){tm.textContent=s}
@@ -1102,8 +1275,8 @@ function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+p
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
-  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;saveState();setForceScanCount(0);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
-  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;saveState();clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
+  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;resetQuickRetryTracking();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;resetQuickRetryTracking();saveState();setAttemptReservationDisplay(null);clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;resetQuickRetryTracking();setAttemptReservationDisplay(null);if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
   switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;const parsed=parseSwitchTimeString(state.switchTime);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{let changed=false;if(state.switchEnabled){state.switchEnabled=false;changed=true;}if(state.switchNextAt!==0){state.switchNextAt=0;changed=true;}if(changed)saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
   timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{if(state.switchEnabled&&v){const parsed=parseSwitchTimeString(v);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}}else if(!state.switchEnabled&&state.switchNextAt!==0){state.switchNextAt=0;}saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
 function setStatus(x){if(lastStatusText!==x){lastStatusText=x;stat.textContent=x;}}
@@ -1111,7 +1284,36 @@ function updateKeepAliveCountdown(){if(!state.keepAlive)return;const msg=keepAli
 function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}const txt=state.keepAlive?keepAliveStatusText():'停止中';stat.textContent=txt;lastStatusText=txt}
 (async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{const now=serverNow();setClock(fmtClock(now));if(state.keepAlive)updateKeepAliveCountdownDisplay();checkAutoSwitch(now)},250);checkAutoSwitch(serverNow())})().catch(()=>{});
   if(!conf.times.length&&!state.keepAlive&&lastStatusText!=='時間帯を選択してください'){updateTimeSelectionStatus();}
-  return{setStatus,uncheck,updateKeepAliveCountdown}})();
+  function formatIsoDate(iso){
+    if(!iso)return '';
+    const m=String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if(!m)return iso;
+    return `${m[1]}/${m[2]}/${m[3]}`;
+  }
+  function formatTimePart(info){
+    if(info&&info.slotTime&&typeof info.slotTime.hour==='number'){
+      const h=('0'+info.slotTime.hour).slice(-2);
+      const m=typeof info.slotTime.minute==='number'?('0'+info.slotTime.minute).slice(-2):'00';
+      return `${h}:${m}`;
+    }
+    if(info&&info.slotKey){
+      const choice=TIME_CHOICES.find(opt=>opt.key===info.slotKey);
+      if(choice)return choice.label;
+    }
+    return '';
+  }
+  function formatReservationText(prefix,info){
+    if(!info||!info.iso)return `${prefix}: なし`;
+    const dateText=formatIsoDate(info.iso);
+    const timeText=formatTimePart(info);
+    return `${prefix}: ${dateText}${timeText?` ${timeText}`:''}`;
+  }
+  function updateReservationInfo({current,attempt}){
+    currentInfo.textContent=formatReservationText('現在の予約',current);
+    attemptInfo.textContent=formatReservationText('変更先候補',attempt);
+  }
+  updateReservationInfo({current:initialReservationDisplay,attempt:attemptReservationDisplay});
+  return{setStatus,uncheck,updateKeepAliveCountdown,updateReservationInfo}})();
 
 
 
@@ -1122,14 +1324,15 @@ if(state.keepAlive){
 }
 
 /* ========= メイン ========= */
-function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();setForceScanCount(0);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
+function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;resetQuickRetryTracking();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
   if(Q(SEL_SUCC)){resetFail();stopOK();return}
   if(Q(SEL_FAIL)){return}
-  if(!state.r)return;
-  if(state.keepAlive){ui.setStatus(keepAliveStatusText());return;}
+  if(!state.r){setAttemptReservationDisplay(null);return;}
+  if(state.keepAlive){setAttemptReservationDisplay(null);ui.setStatus(keepAliveStatusText());return;}
+  setAttemptReservationDisplay(null);
 
   const activeTimes=getActiveTimeKeys();
   if(!activeTimes.length){
@@ -1143,6 +1346,7 @@ async function runCycle(){
   const sec=secondsInMinute();
   if(!forceScanActive){
     if(sec<43){
+      resetQuickRetryTracking();
       const d=delayUntilNextMinute_43s();
       ui.setStatus('待機中');
       clearTimeout(Tm);
@@ -1151,6 +1355,7 @@ async function runCycle(){
     }
 
     if(sec>=53){
+      resetQuickRetryTracking();
       const d=delayUntilNextMinute_43s();
       ui.setStatus('再試行中');
       clearTimeout(Tm);
@@ -1199,6 +1404,7 @@ async function runCycle(){
     if(r==='ng'){ensureForceScanAtLeast(2);ui.setStatus('再試行中');break}
   }
 
+  resetQuickRetryTracking();
   const d=delayUntilNextMinute_43s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
