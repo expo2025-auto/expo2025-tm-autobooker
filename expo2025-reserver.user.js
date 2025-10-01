@@ -1080,8 +1080,10 @@ function stopOK(msg){
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
-  if(Q(SEL_SUCC)){resetFail();stopOK();return}
-  if(Q(SEL_FAIL)){return}
+  const succModal=Q(SEL_SUCC);
+  if(succModal&&isShown(succModal)){resetFail();stopOK();return}
+  const failModal=Q(SEL_FAIL);
+  if(failModal&&isShown(failModal)){return}
   if(!state.r)return;
   if(state.keepAlive){ui.setStatus(keepAliveStatusText());return;}
 
