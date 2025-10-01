@@ -1206,8 +1206,30 @@ async function tryOnceForDate(d){
 }
 
 /* ========= サーバ時刻＆タイミング ========= */
+const SERVER_SYNC_INTERVAL_MS=60000;
 let serverOffset=0;
-async function syncServer(){try{const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});const dh=res.headers.get('date');if(dh){const sv=new Date(dh).getTime();serverOffset=sv-Date.now()}}catch{}}
+let lastServerSyncAt=0;
+let pendingServerSync=null;
+async function syncServer({force=false}={}){
+  const now=Date.now();
+  if(pendingServerSync)return pendingServerSync;
+  if(!force&&lastServerSyncAt&&now-lastServerSyncAt<SERVER_SYNC_INTERVAL_MS)return;
+  lastServerSyncAt=now;
+  pendingServerSync=(async()=>{
+    try{
+      const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});
+      const dh=res.headers.get('date');
+      if(dh){
+        const sv=new Date(dh).getTime();
+        serverOffset=sv-Date.now();
+      }
+    }catch{}
+    finally{
+      pendingServerSync=null;
+    }
+  })();
+  return pendingServerSync;
+}
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
@@ -1336,7 +1358,7 @@ add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(
 function setStatus(x){if(lastStatusText!==x){lastStatusText=x;stat.textContent=x;}}
 function updateKeepAliveCountdown(){if(!state.keepAlive)return;const msg=keepAliveStatusText();if(lastStatusText!==msg){lastStatusText=msg;stat.textContent=msg;}}
 function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}const txt=state.keepAlive?keepAliveStatusText():'停止中';stat.textContent=txt;lastStatusText=txt}
-(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{const now=serverNow();setClock(fmtClock(now));if(state.keepAlive)updateKeepAliveCountdownDisplay();checkAutoSwitch(now)},250);checkAutoSwitch(serverNow())})().catch(()=>{});
+(async()=>{await syncServer({force:true});if(Clk)clearInterval(Clk);Clk=setInterval(()=>{const now=serverNow();setClock(fmtClock(now));if(state.keepAlive)updateKeepAliveCountdownDisplay();checkAutoSwitch(now)},250);checkAutoSwitch(serverNow())})().catch(()=>{});
   if(!conf.times.length&&!state.keepAlive&&lastStatusText!=='時間帯を選択してください'){updateTimeSelectionStatus();}
   function formatIsoDate(iso){
     if(!iso)return '';
