@@ -148,14 +148,14 @@ conf.times=normalizeTimeKeys(conf.times);
 Lset(CONF_KEY,conf);
 let stateRaw=Sget(STATE_KEY);
 if(typeof stateRaw!=='object'||!stateRaw){stateRaw={}};
-let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:'',switchNextAt:0,retryMinuteKey:'',retryReloads:0},stateRaw);
+let state=Object.assign({r:false,keepAlive:false,switchEnabled:false,switchTime:'',switchNextAt:0},stateRaw);
 if(typeof state.r!=='boolean')state.r=false;
 if(typeof state.keepAlive!=='boolean')state.keepAlive=false;
 if(typeof state.switchEnabled!=='boolean')state.switchEnabled=false;
 if(typeof state.switchTime!=='string')state.switchTime='';
 if(typeof state.switchNextAt!=='number'||!Number.isFinite(state.switchNextAt))state.switchNextAt=0;
-if(typeof state.retryMinuteKey!=='string')state.retryMinuteKey='';
-if(typeof state.retryReloads!=='number'||!Number.isFinite(state.retryReloads)||state.retryReloads<0)state.retryReloads=0;
+if('retryMinuteKey' in state)delete state.retryMinuteKey;
+if('retryReloads' in state)delete state.retryReloads;
 if(state.keepAlive&&state.r)state.r=false;
 Sset(STATE_KEY,state);
 function saveState(){Sset(STATE_KEY,state)}
@@ -363,7 +363,7 @@ const SEL_SUCC='h2#reservation_modal_title',SEL_FAIL='h2#reservation_fail_modal_
 const FAIL_KEY='nr_fail_r';
 function getFail(){return +(sessionStorage.getItem(FAIL_KEY)||'0')}
 function setFail(n){sessionStorage.setItem(FAIL_KEY,n)}
-function resetFail(){setFail(0)}
+function resetFail(){setFail(0);resetForcedReload()}
 let __reloading=false,__reloadStamp=0;
 const FORCE_SCAN_KEY='nr_force_scan_count';
 function getForceScanCount(){const v=+(sessionStorage.getItem(FORCE_SCAN_KEY)||'0');return Number.isFinite(v)&&v>0?Math.floor(v):0}
@@ -1190,50 +1190,32 @@ async function syncServer(){try{const res=await fetch(location.origin+'/',{metho
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
-const QUICK_RETRY_LIMIT=2;
-function minuteKeyOf(date){
-  const pad=n=>('0'+n).slice(-2);
-  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}-${pad(date.getHours())}-${pad(date.getMinutes())}`;
-}
-function tryQuickRetryReload(now){
-  if(!state.r)return false;
-  const sec=now.getSeconds()+now.getMilliseconds()/1000;
-  if(sec>=43)return false;
-  let changed=false;
-  const key=minuteKeyOf(now);
-  if(state.retryMinuteKey!==key){
-    state.retryMinuteKey=key;
-    state.retryReloads=0;
-    changed=true;
-  }
-  if(state.retryReloads>=QUICK_RETRY_LIMIT)return false;
-  state.retryReloads+=1;
-  changed=true;
-  if(changed)saveState();
-  setUIStatus('再試行中');
-  clearTimeout(Tm);
-  safeReload();
-  return true;
-}
-function resetQuickRetryTracking(){
-  if(state.retryMinuteKey!==''||state.retryReloads!==0){
-    state.retryMinuteKey='';
-    state.retryReloads=0;
-    saveState();
-  }
-}
+const FORCED_RELOAD_KEY='nr_forced_reload_v1';
+function minuteBucket(now){const t=now instanceof Date?now.getTime():Number(now);if(!Number.isFinite(t))return 0;return Math.floor(t/60000)}
+function readForcedReloadState(){try{const raw=sessionStorage.getItem(FORCED_RELOAD_KEY);if(!raw)return{minute:0,count:0};const parsed=JSON.parse(raw);const minute=Number(parsed?.minute);const count=Number(parsed?.count);return{minute:Number.isFinite(minute)?minute:0,count:Number.isFinite(count)?count:0}}catch{return{minute:0,count:0}}}
+function writeForcedReloadState(minute,count){try{const safeMinute=Number.isFinite(minute)?minute:0;const safeCount=Number.isFinite(count)?count:0;sessionStorage.setItem(FORCED_RELOAD_KEY,JSON.stringify({minute:safeMinute,count:safeCount}))}catch{}}
+function getForcedReloadState(now){const bucket=minuteBucket(now??serverNow());const current=readForcedReloadState();if(bucket>0&&current.minute!==bucket){writeForcedReloadState(bucket,0);return{minute:bucket,count:0}}if(current.minute===0&&bucket>0){writeForcedReloadState(bucket,current.count||0);return{minute:bucket,count:current.count||0}}return current}
+function incrementForcedReload(now){const bucket=minuteBucket(now??serverNow());const state=getForcedReloadState(now);const minute=state.minute||bucket;const baseCount=Number.isFinite(state.count)?state.count:0;const nextCount=baseCount>=3?baseCount:baseCount+1;writeForcedReloadState(minute,nextCount);return nextCount}
+function resetForcedReload(now){const bucket=minuteBucket(now??serverNow());writeForcedReloadState(bucket,0)}
 function scheduleRetryOrNextMinute(){
   if(!state.r){
-    resetQuickRetryTracking();
+    resetForcedReload();
     return;
   }
   const now=serverNow();
-  if(tryQuickRetryReload(now))return;
-  resetQuickRetryTracking();
+  const sec=now.getSeconds()+now.getMilliseconds()/1000;
+  const forcedState=getForcedReloadState(now);
+  if(sec<53&&forcedState.count<3){
+    ui.setStatus('再試行中');
+    clearTimeout(Tm);
+    incrementForcedReload(now);
+    safeReload();
+    return;
+  }
   const d=delayUntilNextMinute_43s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
-  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+  Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
 }
 
 /* ========= UI ========= */
@@ -1330,8 +1312,8 @@ function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+p
 function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}
 renderChips();
 add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};
-  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;resetQuickRetryTracking();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
-  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;resetQuickRetryTracking();saveState();setAttemptReservationDisplay(null);clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;resetQuickRetryTracking();setAttemptReservationDisplay(null);if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
+  tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}const activeTimeKeys=getActiveTimeKeys();if(activeTimeKeys.length===0){stat.textContent='時間帯を選択してください';lastStatusText=stat.textContent;tg.checked=false;return}if(state.keepAlive&&keepToggle.checked){keepToggle.checked=false;keepToggle.dispatchEvent(new Event('change',{bubbles:true}))}state.r=true;saveState();stat.textContent='稼働中';runCycle()}else{state.r=false;resetForcedReload();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);stat.textContent=state.keepAlive?keepAliveStatusText():'停止中';clearTimeout(Tm)}});
+  keepToggle.addEventListener('change',()=>{if(keepToggle.checked){state.keepAlive=true;state.r=false;resetForcedReload();saveState();setAttemptReservationDisplay(null);clearTimeout(Tm);if(tg.checked){tg.checked=false;tg.dispatchEvent(new Event('change',{bubbles:true}))}stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}else{state.keepAlive=false;resetForcedReload();setAttemptReservationDisplay(null);if(state.switchEnabled){state.switchEnabled=false;if(state.switchNextAt!==0)state.switchNextAt=0;if(switchCheck.checked)switchCheck.checked=false;}else if(state.switchNextAt!==0){state.switchNextAt=0;}saveState();clearKeepAliveTimer();stat.textContent=state.r?'稼働中':'停止中';lastStatusText=stat.textContent;}});
   switchCheck.addEventListener('change',()=>{if(switchCheck.checked){if(!timeInput.value){stat.textContent='切替時刻を入力してください';lastStatusText=stat.textContent;switchCheck.checked=false;return}state.switchEnabled=true;state.switchTime=timeInput.value;const parsed=parseSwitchTimeString(state.switchTime);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;scheduleKeepAliveReload();try{checkAutoSwitch(serverNow())}catch{}}}else{let changed=false;if(state.switchEnabled){state.switchEnabled=false;changed=true;}if(state.switchNextAt!==0){state.switchNextAt=0;changed=true;}if(changed)saveState();if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;}}});
   timeInput.addEventListener('change',()=>{const v=timeInput.value||'';state.switchTime=v;if(!v&&state.switchEnabled){state.switchEnabled=false;state.switchNextAt=0;saveState();if(switchCheck.checked){switchCheck.checked=false;switchCheck.dispatchEvent(new Event('change',{bubbles:true}));return}}else{if(state.switchEnabled&&v){const parsed=parseSwitchTimeString(v);if(parsed){state.switchNextAt=computeNextSwitchAt(serverNow(),parsed.hh,parsed.mm);}else{state.switchNextAt=0;}}else if(!state.switchEnabled&&state.switchNextAt!==0){state.switchNextAt=0;}saveState()}if(state.keepAlive){stat.textContent=keepAliveStatusText();lastStatusText=stat.textContent;try{checkAutoSwitch(serverNow())}catch{}}});
 function setStatus(x){if(lastStatusText!==x){lastStatusText=x;stat.textContent=x;}}
@@ -1379,7 +1361,7 @@ if(state.keepAlive){
 }
 
 /* ========= メイン ========= */
-function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;resetQuickRetryTracking();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
+function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;resetForcedReload();saveState();setForceScanCount(0);setAttemptReservationDisplay(null);ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
@@ -1401,20 +1383,20 @@ async function runCycle(){
   const sec=secondsInMinute();
   if(!forceScanActive){
     if(sec<43){
-      resetQuickRetryTracking();
+      resetForcedReload();
       const d=delayUntilNextMinute_43s();
       ui.setStatus('待機中');
       clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
       return;
     }
 
     if(sec>=53){
-      resetQuickRetryTracking();
+      resetForcedReload();
       const d=delayUntilNextMinute_43s();
       ui.setStatus('再試行中');
       clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+      Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
       return;
     }
   }
@@ -1459,11 +1441,11 @@ async function runCycle(){
     if(r==='ng'){ensureForceScanAtLeast(2);ui.setStatus('再試行中');break}
   }
 
-  resetQuickRetryTracking();
+  resetForcedReload();
   const d=delayUntilNextMinute_43s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
-  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+  Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
 }
 
 if(state.r&&!state.keepAlive)runCycle();

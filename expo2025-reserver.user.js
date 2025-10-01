@@ -297,11 +297,20 @@ function checkAutoSwitch(now){
 /* ========= セレクタ ========= */
 const SEL_SUCC='h2#reservation_modal_title',SEL_FAIL='h2#reservation_fail_modal_title';
 
+/* ========= 強制リロード回数管理 ========= */
+const FORCED_RELOAD_KEY='nr_forced_reload_v1';
+function minuteBucket(now){const t=now instanceof Date?now.getTime():Number(now);if(!Number.isFinite(t))return 0;return Math.floor(t/60000)}
+function readForcedReloadState(){try{const raw=sessionStorage.getItem(FORCED_RELOAD_KEY);if(!raw)return{minute:0,count:0};const parsed=JSON.parse(raw);const minute=Number(parsed?.minute);const count=Number(parsed?.count);return{minute:Number.isFinite(minute)?minute:0,count:Number.isFinite(count)?count:0}}catch{return{minute:0,count:0}}}
+function writeForcedReloadState(minute,count){try{const safeMinute=Number.isFinite(minute)?minute:0;const safeCount=Number.isFinite(count)?count:0;sessionStorage.setItem(FORCED_RELOAD_KEY,JSON.stringify({minute:safeMinute,count:safeCount}))}catch{}}
+function getForcedReloadState(now){const bucket=minuteBucket(now??serverNow());const current=readForcedReloadState();if(bucket>0&&current.minute!==bucket){writeForcedReloadState(bucket,0);return{minute:bucket,count:0}}if(current.minute===0&&bucket>0){writeForcedReloadState(bucket,current.count||0);return{minute:bucket,count:current.count||0}}return current}
+function incrementForcedReload(now){const bucket=minuteBucket(now??serverNow());const state=getForcedReloadState(now);const minute=state.minute||bucket;const baseCount=Number.isFinite(state.count)?state.count:0;const nextCount=baseCount>=3?baseCount:baseCount+1;writeForcedReloadState(minute,nextCount);return nextCount}
+function resetForcedReload(now){const bucket=minuteBucket(now??serverNow());writeForcedReloadState(bucket,0)}
+
 /* ========= 失敗トースト → 強制リロード（最大3回） ========= */
 const FAIL_KEY='nr_fail_r';
 function getFail(){return +(sessionStorage.getItem(FAIL_KEY)||'0')}
 function setFail(n){sessionStorage.setItem(FAIL_KEY,n)}
-function resetFail(){setFail(0)}
+function resetFail(){setFail(0);resetForcedReload()}
 let __reloading=false,__reloadStamp=0;
 function robustReload(){
   if(__reloading)return;
@@ -940,18 +949,21 @@ function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 function scheduleRetryOrNextMinute(){
-  const sec=secondsInMinute();
-  if(sec<53){
+  const now=serverNow();
+  const sec=now.getSeconds()+now.getMilliseconds()/1000;
+  const forcedState=getForcedReloadState(now);
+  if(sec<53&&forcedState.count<3){
     if(state.r){
       ui.setStatus('再試行中');
+      incrementForcedReload(now);
       safeReload();
     }
-  }else{
-    const d=delayUntilNextMinute_43s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    return;
   }
+  const d=delayUntilNextMinute_43s();
+  ui.setStatus('待機中');
+  clearTimeout(Tm);
+  Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
 }
 
 /* ========= UI ========= */
@@ -1057,7 +1069,14 @@ if(state.keepAlive){
 }
 
 /* ========= メイン ========= */
-function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
+function stopOK(msg){
+  try{clearTimeout(Tm)}catch{}
+  state.r=false;
+  saveState();
+  resetForcedReload();
+  ui.uncheck();
+  if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}
+}
 
 async function runCycle(){
   if(isTypeSelectionPage()){resetFail();ui.setStatus('券種選択ページに移動しました');return}
