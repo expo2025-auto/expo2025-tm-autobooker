@@ -874,19 +874,32 @@ async function flowConfirm(targetISO,{targetTimeKey,allowedTimeKeys}={}){
     return null;
   };
   const findConfirmBtn=(exclude=new Set())=>{
-    for(const sel of confirmBtnSelectors){
-      const candidates=A(sel);
-      if(!candidates.length)continue;
-      for(const el of candidates){
-        if(exclude.has(el))continue;
-        if(isEnabled(el)&&vis(el))return el;
+    const scoreEl=el=>{
+      if(matchesSetDateText(el))return 0;
+      if(matchesConfirmText(el))return 1;
+      return 2;
+    };
+    const seen=new Set();
+    const collect=(arr)=>{
+      const result=[];
+      for(const el of arr){
+        if(!el||exclude.has(el)||seen.has(el))continue;
+        seen.add(el);
+        if(!isEnabled(el)||!vis(el))continue;
+        result.push(el);
       }
+      return result;
+    };
+    for(const sel of confirmBtnSelectors){
+      const list=collect(A(sel));
+      if(!list.length)continue;
+      list.sort((a,b)=>scoreEl(a)-scoreEl(b));
+      if(list[0])return list[0];
     }
-    const candidates=A('button, [role="button"], a');
-    for(const el of candidates){
-      if(exclude.has(el))continue;
-      if(!isEnabled(el)||!vis(el))continue;
-      if(matchesConfirmText(el))return el;
+    const fallback=collect(A('button, [role="button"], a'));
+    if(fallback.length){
+      fallback.sort((a,b)=>scoreEl(a)-scoreEl(b));
+      if(fallback[0])return fallback[0];
     }
     return null;
   };
