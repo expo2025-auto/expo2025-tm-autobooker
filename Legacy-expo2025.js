@@ -44,7 +44,104 @@ function safeReload(){
 }
 
 /* ========= 設定/状態 ========= */
-let conf=Object.assign({dates:[]},Lget(CONF_KEY));
+const TIME_CHOICES=[
+  {key:'09',hour:9,label:'9時'},
+  {key:'10',hour:10,label:'10時'},
+  {key:'11',hour:11,label:'11時'},
+  {key:'12',hour:12,label:'12時'},
+  {key:'17',hour:17,label:'17時'}
+];
+const DEFAULT_TIME_KEYS=TIME_CHOICES.map(t=>t.key);
+const TIME_KEY_ORDER=TIME_CHOICES.reduce((acc,opt,idx)=>{acc[opt.key]=idx;return acc;},{});
+function normalizeTimeKeys(list){
+  if(!Array.isArray(list))return DEFAULT_TIME_KEYS.slice();
+  const filtered=list.filter(k=>Object.prototype.hasOwnProperty.call(TIME_KEY_ORDER,k));
+  const unique=[];
+  for(const key of filtered){if(!unique.includes(key))unique.push(key);}
+  unique.sort((a,b)=>TIME_KEY_ORDER[a]-TIME_KEY_ORDER[b]);
+  return unique;
+}
+function getActiveTimeKeys(){return normalizeTimeKeys(conf.times);}
+function includesAllTimeKeys(keys){if(!Array.isArray(keys))return false;return keys.length===DEFAULT_TIME_KEYS.length&&DEFAULT_TIME_KEYS.every(k=>keys.includes(k));}
+function parseTimeLikeString(str){
+  if(!str)return null;
+  const normalized=String(str).replace(/[\s\u3000]+/g,'').toLowerCase();
+  if(!normalized)return null;
+  const colon=normalized.match(/(午前|午後)?([01]?\d|2[0-3])[：:](\d{2})/);
+  if(colon){
+    let hour=parseInt(colon[2],10);
+    const minute=parseInt(colon[3],10);
+    const period=colon[1]||'';
+    if(period.includes('午前')&&hour===12)hour=0;
+    if(period.includes('午後')&&hour<12)hour+=12;
+    if(/pm/.test(normalized)&&hour<12)hour+=12;
+    if(/am/.test(normalized)&&hour===12)hour=0;
+    return{hour,minute};
+  }
+  const hm=normalized.match(/(午前|午後)?(\d{1,2})時(\d{1,2})?分?/);
+  if(hm){
+    let hour=parseInt(hm[2],10);
+    const minute=hm[3]?parseInt(hm[3],10):0;
+    const period=hm[1]||'';
+    if(period.includes('午前')&&hour===12)hour=0;
+    if(period.includes('午後')&&hour<12)hour+=12;
+    if(/pm/.test(normalized)&&hour<12)hour+=12;
+    if(/am/.test(normalized)&&hour===12)hour=0;
+    return{hour,minute};
+  }
+  return null;
+}
+function extractSlotTime(el){
+  if(!el)return null;
+  const tryMatch=val=>{const res=parseTimeLikeString(val);return res?res:null;};
+  const timeEl=el.querySelector?.('time[datetime]');
+  if(timeEl){
+    const dt=timeEl.getAttribute('datetime')||'';
+    const m=dt.match(/T(\d{2}):(\d{2})/);
+    if(m){
+      return{hour:Number(m[1]),minute:Number(m[2])};
+    }
+  }
+  const dataTime=el.getAttribute?.('data-time');
+  if(dataTime){
+    const hit=tryMatch(dataTime);
+    if(hit)return hit;
+  }
+  if(el.dataset){
+    for(const key of ['time','startTime','start']){
+      if(el.dataset[key]){
+        const hit=tryMatch(el.dataset[key]);
+        if(hit)return hit;
+      }
+    }
+  }
+  let combined='';
+  if(el.getAttribute){
+    const aria=el.getAttribute('aria-label');
+    if(aria)combined+=' '+aria;
+    const labelled=el.getAttribute('aria-labelledby');
+    if(labelled){
+      labelled.split(/\s+/).forEach(id=>{
+        const node=document.getElementById(id.trim());
+        if(node)combined+=' '+(node.textContent||'');
+      });
+    }
+    const described=el.getAttribute('aria-describedby');
+    if(described){
+      described.split(/\s+/).forEach(id=>{
+        const node=document.getElementById(id.trim());
+        if(node)combined+=' '+(node.textContent||'');
+      });
+    }
+  }
+  combined+=' '+(el.textContent||'');
+  const hit=tryMatch(combined);
+  if(hit)return hit;
+  return null;
+}
+let conf=Object.assign({dates:[],times:DEFAULT_TIME_KEYS.slice()},Lget(CONF_KEY));
+conf.times=normalizeTimeKeys(conf.times);
+Lset(CONF_KEY,conf);
 let state=Sget(STATE_KEY);
 if(typeof state.r!=='boolean'){state={r:false};Sset(STATE_KEY,state)}
 ;(function migrateOld(){
@@ -216,13 +313,54 @@ async function ensureDate(iso,timeout=8000){
   }
   return false;
 }
-function firstEnabledSlot(){
-  const all=[...A('div[role=button].style_main__button__Z4RWX'),...A('button.style_main__button__Z4RWX'),...A('[role=button].style_main__button__Z4RWX')];
-  return all.find(el=>vis(el)&&!el.hasAttribute('data-disabled')&&(el.getAttribute('aria-disabled')||'').toLowerCase()!=='true')||null;
+function collectSlotElements(){
+  const lists=[
+    A('div[role=button].style_main__button__Z4RWX'),
+    A('button.style_main__button__Z4RWX'),
+    A('[role=button].style_main__button__Z4RWX')
+  ];
+  const merged=[];
+  for(const arr of lists){
+    for(const el of arr){
+      const root=slotElementRoot(el)||el;
+      if(!merged.includes(root))merged.push(root);
+    }
+  }
+  return merged;
 }
-async function waitFirstEnabledSlot(timeout=6000){
-  const got=firstEnabledSlot(); if(got) return got;
-  return await waitUntil(firstEnabledSlot,{timeout,interval:60,attrs:['class','disabled','aria-disabled','data-disabled']});
+function firstEnabledSlot(allowedKeys){
+  const active=Array.isArray(allowedKeys)?normalizeTimeKeys(allowedKeys):[];
+  const allowAny=!active.length||includesAllTimeKeys(active);
+  const all=collectSlotElements();
+  const available=all.filter(el=>isEnabled(el));
+  if(!available.length)return null;
+  const enriched=available.map(el=>({el,time:extractSlotTime(el)}));
+  for(const key of active){
+    const choice=TIME_CHOICES.find(opt=>opt.key===key);
+    if(!choice)continue;
+    const matches=enriched.filter(item=>item.time&&typeof item.time.hour==='number'&&item.time.hour===choice.hour);
+    if(matches.length){
+      matches.sort((a,b)=>{
+        const am=typeof a.time.minute==='number'?a.time.minute:0;
+        const bm=typeof b.time.minute==='number'?b.time.minute:0;
+        if(am!==bm)return am-bm;
+        return available.indexOf(a.el)-available.indexOf(b.el);
+      });
+      return matches[0].el;
+    }
+  }
+  if(allowAny)return available[0]||null;
+  return null;
+}
+async function waitFirstEnabledSlot(allowedKeys,timeout=6000){
+  const getter=()=>firstEnabledSlot(allowedKeys);
+  const got=getter(); if(got) return got;
+  return await waitUntil(getter,{timeout,interval:60,attrs:['class','disabled','aria-disabled','data-disabled']});
+}
+function slotElementRoot(el){
+  if(!el)return null;
+  if(el.matches?.('button,[role="button"]'))return el;
+  return el.closest?.('button,[role="button"]')||el;
 }
 function isEnabled(el){
   if(!el||!vis(el))return false;
@@ -442,10 +580,15 @@ async function tryOnceForDate(d){
   const selOK=await ensureDate(iso,8000);
   if(!selOK) return 'notSelectable';
 
-  const slot=await waitFirstEnabledSlot(6000);
+  const activeTimes=getActiveTimeKeys();
+  if(!activeTimes.length)return 'none';
+  const slot=await waitFirstEnabledSlot(activeTimes,6000);
   if(!slot) return 'none';
 
   KC(slot);
+  const slotTime=extractSlotTime(slotElementRoot(slot)||slot);
+  const slotKey=(()=>{if(slotTime){const choice=TIME_CHOICES.find(opt=>opt.hour===slotTime.hour);return choice?choice.key:null;}return null;})();
+  if(slotKey&&activeTimes.length&&!activeTimes.includes(slotKey))return 'none';
   if(selectedDateISO()!==iso) return 'none';
 
   await flowConfirm(iso);
@@ -477,7 +620,200 @@ function scheduleRetryOrNextMinute(){
 
 /* ========= UI ========= */
 let Tm=null,Clk=null;
-const ui=(()=>{const w=document.createElement('div');Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};const rTop=row();const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;rTop.appendChild(title);rTop.appendChild(tg);const rTime=row(6);const labT=document.createElement('label');labT.textContent='SERVER';labT.style.width='58px';labT.style.fontSize='12px';const tm=document.createElement('div');tm.style.fontFamily='ui-monospace,Menlo,monospace';tm.style.fontSize='12px';tm.textContent='--:--:--';rTime.appendChild(labT);rTime.appendChild(tm);const rDates=row();const labD=document.createElement('label');labD.textContent='対象日';labD.style.width='58px';labD.style.fontSize='12px';const addWrap=document.createElement('div');Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});const din=document.createElement('input');din.type='date';din.style.flex='1';const add=document.createElement('button');add.textContent='追加';Object.assign(add.style,{padding:'4px 8px'});addWrap.appendChild(din);addWrap.appendChild(add);rDates.appendChild(labD);rDates.appendChild(addWrap);const chips=document.createElement('div');Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});const stat=document.createElement('div');stat.style.fontSize='12px';stat.textContent=state.r?'稼働中':'停止中';w.appendChild(rTop);w.appendChild(rTime);w.appendChild(rDates);w.appendChild(chips);w.appendChild(stat);document.body.appendChild(w);function setClock(s){tm.textContent=s}function fmtClock(d){const pad=n=>('0'+n).slice(-2);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds())}function renderChips(){chips.innerHTML='';conf.dates.forEach((ds,i)=>{const b=document.createElement('span');Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});b.textContent=ds;const x=document.createElement('button');x.textContent='×';Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});x.onclick=()=>{conf.dates.splice(i,1);Lset(CONF_KEY,conf);renderChips()};const wrap=document.createElement('span');wrap.appendChild(b);wrap.appendChild(x);chips.appendChild(wrap)})}renderChips();add.onclick=()=>{if(!din.value)return;const v=din.value;if(!conf.dates.includes(v))conf.dates.push(v);conf.dates.sort();Lset(CONF_KEY,conf);renderChips()};tg.addEventListener('change',()=>{if(tg.checked){if(conf.dates.length===0){stat.textContent='日付を追加してください';tg.checked=false;return}state.r=true;Sset(STATE_KEY,state);stat.textContent='稼働中';runCycle()}else{state.r=false;Sset(STATE_KEY,state);stat.textContent='停止中';clearTimeout(Tm)}});function setStatus(x){stat.textContent=x}function uncheck(){try{tg.checked=false;tg.dispatchEvent(new Event('input',{bubbles:true}));tg.dispatchEvent(new Event('change',{bubbles:true}))}catch{}stat.textContent='停止中'};(async()=>{await syncServer();if(Clk)clearInterval(Clk);Clk=setInterval(()=>{setClock(fmtClock(serverNow()))},250)})().catch(()=>{});return{setStatus,uncheck}})();
+const ui=(()=>{
+  const w=document.createElement('div');
+  Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});
+  const row=m=>{
+    const d=document.createElement('div');
+    Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});
+    return d;
+  };
+  const rTop=row();
+  const title=document.createElement('div');
+  title.textContent='自動新規予約';
+  title.style.fontWeight='bold';
+  const tg=document.createElement('input');
+  tg.type='checkbox';
+  tg.checked=!!state.r;
+  rTop.appendChild(title);
+  rTop.appendChild(tg);
+  const rTime=row(6);
+  const labT=document.createElement('label');
+  labT.textContent='SERVER';
+  labT.style.width='58px';
+  labT.style.fontSize='12px';
+  const tm=document.createElement('div');
+  tm.style.fontFamily='ui-monospace,Menlo,monospace';
+  tm.style.fontSize='12px';
+  tm.textContent='--:--:--';
+  rTime.appendChild(labT);
+  rTime.appendChild(tm);
+  const rTimePref=row();
+  const labTimePref=document.createElement('label');
+  labTimePref.textContent='時間帯';
+  labTimePref.style.width='58px';
+  labTimePref.style.fontSize='12px';
+  const timeBox=document.createElement('div');
+  Object.assign(timeBox.style,{display:'flex',flexDirection:'column',gap:'4px',flex:'1'});
+  const timeWrap=document.createElement('div');
+  Object.assign(timeWrap.style,{display:'flex',flexWrap:'wrap',gap:'6px'});
+  const timeStatus=document.createElement('div');
+  Object.assign(timeStatus.style,{fontSize:'11px',lineHeight:'1.4',color:'#333'});
+  TIME_CHOICES.forEach(opt=>{
+    const lbl=document.createElement('label');
+    Object.assign(lbl.style,{display:'flex',alignItems:'center',gap:'4px',fontSize:'12px'});
+    const cb=document.createElement('input');
+    cb.type='checkbox';
+    cb.value=opt.key;
+    cb.checked=conf.times.includes(opt.key);
+    cb.addEventListener('change',()=>{
+      const idx=conf.times.indexOf(opt.key);
+      if(cb.checked){
+        if(idx===-1)conf.times.push(opt.key);
+      }else{
+        if(idx!==-1)conf.times.splice(idx,1);
+      }
+      conf.times=normalizeTimeKeys(conf.times);
+      Lset(CONF_KEY,conf);
+      updateTimeSelectionStatus();
+      if(state.r&&!getActiveTimeKeys().length){
+        tg.checked=false;
+        tg.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+    });
+    lbl.appendChild(cb);
+    const span=document.createElement('span');
+    span.textContent=opt.label;
+    lbl.appendChild(span);
+    timeWrap.appendChild(lbl);
+  });
+  timeBox.appendChild(timeWrap);
+  timeBox.appendChild(timeStatus);
+  rTimePref.appendChild(labTimePref);
+  rTimePref.appendChild(timeBox);
+  const rDates=row();
+  const labD=document.createElement('label');
+  labD.textContent='対象日';
+  labD.style.width='58px';
+  labD.style.fontSize='12px';
+  const addWrap=document.createElement('div');
+  Object.assign(addWrap.style,{display:'flex',gap:'6px',flex:'1'});
+  const din=document.createElement('input');
+  din.type='date';
+  din.style.flex='1';
+  const add=document.createElement('button');
+  add.textContent='追加';
+  Object.assign(add.style,{padding:'4px 8px'});
+  addWrap.appendChild(din);
+  addWrap.appendChild(add);
+  rDates.appendChild(labD);
+  rDates.appendChild(addWrap);
+  const chips=document.createElement('div');
+  Object.assign(chips.style,{display:'flex',flexWrap:'wrap',gap:'6px',maxHeight:'120px',overflow:'auto',marginBottom:'6px'});
+  const stat=document.createElement('div');
+  stat.style.fontSize='12px';
+  stat.textContent=state.r?'稼働中':'停止中';
+  w.appendChild(rTop);
+  w.appendChild(rTime);
+  w.appendChild(rTimePref);
+  w.appendChild(rDates);
+  w.appendChild(chips);
+  w.appendChild(stat);
+  document.body.appendChild(w);
+  function setClock(s){tm.textContent=s;}
+  function fmtClock(d){
+    const pad=n=>('0'+n).slice(-2);
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+  }
+  function updateTimeSelectionStatus(){
+    const active=getActiveTimeKeys();
+    if(!active.length){
+      timeStatus.textContent='※時間帯を選択してください';
+      timeStatus.style.color='#d33';
+      return;
+    }
+    const labels=active.map(key=>{
+      const opt=TIME_CHOICES.find(o=>o.key===key);
+      return opt?opt.label:key;
+    });
+    if(includesAllTimeKeys(active)){
+      timeStatus.textContent='全ての時間帯を監視します';
+    }else{
+      timeStatus.textContent='監視中: '+labels.join('・');
+    }
+    timeStatus.style.color='#333';
+  }
+  function renderChips(){
+    chips.innerHTML='';
+    conf.dates.forEach((ds,i)=>{
+      const b=document.createElement('span');
+      Object.assign(b.style,{background:'#eee',borderRadius:'999px',padding:'2px 8px',fontSize:'12px'});
+      b.textContent=ds;
+      const x=document.createElement('button');
+      x.textContent='×';
+      Object.assign(x.style,{marginLeft:'6px',border:'none',background:'transparent',cursor:'pointer'});
+      x.onclick=()=>{
+        conf.dates.splice(i,1);
+        Lset(CONF_KEY,conf);
+        renderChips();
+      };
+      const wrap=document.createElement('span');
+      wrap.appendChild(b);
+      wrap.appendChild(x);
+      chips.appendChild(wrap);
+    });
+  }
+  renderChips();
+  updateTimeSelectionStatus();
+  add.onclick=()=>{
+    if(!din.value)return;
+    const v=din.value;
+    if(!conf.dates.includes(v))conf.dates.push(v);
+    conf.dates.sort();
+    Lset(CONF_KEY,conf);
+    renderChips();
+  };
+  tg.addEventListener('change',()=>{
+    if(tg.checked){
+      if(conf.dates.length===0){
+        stat.textContent='日付を追加してください';
+        tg.checked=false;
+        return;
+      }
+      const activeTimeKeys=getActiveTimeKeys();
+      if(activeTimeKeys.length===0){
+        stat.textContent='時間帯を選択してください';
+        tg.checked=false;
+        updateTimeSelectionStatus();
+        return;
+      }
+      state.r=true;
+      Sset(STATE_KEY,state);
+      stat.textContent='稼働中';
+      runCycle();
+    }else{
+      state.r=false;
+      Sset(STATE_KEY,state);
+      stat.textContent='停止中';
+      clearTimeout(Tm);
+    }
+  });
+  function setStatus(x){stat.textContent=x;}
+  function uncheck(){
+    try{
+      tg.checked=false;
+      tg.dispatchEvent(new Event('input',{bubbles:true}));
+      tg.dispatchEvent(new Event('change',{bubbles:true}));
+    }catch{}
+    stat.textContent='停止中';
+  }
+  (async()=>{
+    await syncServer();
+    if(Clk)clearInterval(Clk);
+    Clk=setInterval(()=>{setClock(fmtClock(serverNow()));},250);
+  })().catch(()=>{});
+  return{setStatus,uncheck};
+})();
 
 /* ========= メイン ========= */
 function stopOK(){try{clearTimeout(Tm)}catch{}state.r=false;Sset(STATE_KEY,state);ui.uncheck()}
@@ -486,6 +822,7 @@ async function runCycle(){
   if(Q(SEL_SUCC)){resetFail();stopOK();return}
   if(Q(SEL_FAIL)){return}
   if(!state.r)return;
+  if(!getActiveTimeKeys().length){ui.setStatus('時間帯を選択してください');stopOK();return}
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
