@@ -2,7 +2,7 @@
 // @name         (旧) Expo2025 予約オート
 // @namespace    http://tampermonkey.net/
 // @version      1.1.2
-// @description  可視/活性監視→即クリック。毎分25秒に開始、選択不可は37秒まで即リロードで粘る。失敗時は保険の強制リロード（最大3回）。UI：複数日/サーバ時刻表示/日付ロック/有効化待ち対応。タブごとにON/OFF独立。デフォルトOFF。10月指定時は必要に応じて次月ページめくり（JSパス優先 & ハードクリック）。
+// @description  可視/活性監視→即クリック。毎分15秒に開始、選択不可は25秒まで即リロードで粘る。失敗時は保険の強制リロード（最大3回）。UI：複数日/サーバ時刻表示/日付ロック/有効化待ち対応。タブごとにON/OFF独立。デフォルトOFF。10月指定時は必要に応じて次月ページめくり（JSパス優先 & ハードクリック）。
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -602,17 +602,17 @@ let serverOffset=0;
 async function syncServer(){try{const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});const dh=res.headers.get('date');if(dh){const sv=new Date(dh).getTime();serverOffset=sv-Date.now()}}catch{}}
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
-function delayUntilNextMinute_25s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(25,0);if(n.getSeconds()>25||(n.getSeconds()===25&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function delayUntilNextMinute_15s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(15,0);if(n.getSeconds()>15||(n.getSeconds()===15&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 function scheduleRetryOrNextMinute(){
   const sec=secondsInMinute();
-  if(sec<37){
+  if(sec<25){
     if(state.r){
-      ui.setStatus('即再読込（<37s）');
+      ui.setStatus('即再読込（<25s）');
       safeReload();
     }
   }else{
-    const d=delayUntilNextMinute_25s();
-    ui.setStatus('次: →25s (+'+(Math.round(d/100)/10)+'s)');
+    const d=delayUntilNextMinute_15s();
+    ui.setStatus('次: →15s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
   }
@@ -826,17 +826,17 @@ async function runCycle(){
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<25){
-    const d=delayUntilNextMinute_25s();
-    ui.setStatus('待機: →25s (+'+(Math.round(d/100)/10)+'s)');
+  if(sec<15){
+    const d=delayUntilNextMinute_15s();
+    ui.setStatus('待機: →15s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
   }
 
-  if(sec>=37){
-    const d=delayUntilNextMinute_25s();
-    ui.setStatus('枠外: →25s (+'+(Math.round(d/100)/10)+'s)');
+  if(sec>=25){
+    const d=delayUntilNextMinute_15s();
+    ui.setStatus('枠外: →15s (+'+(Math.round(d/100)/10)+'s)');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
@@ -878,8 +878,8 @@ async function runCycle(){
     if(r==='ng'){ui.setStatus('押し負け→継続');break}
   }
 
-  const d=delayUntilNextMinute_25s();
-  ui.setStatus('次: →25s (+'+(Math.round(d/100)/10)+'s)');
+  const d=delayUntilNextMinute_15s();
+  ui.setStatus('次: →15s (+'+(Math.round(d/100)/10)+'s)');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
 }
