@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Simple Clock with Server Sync
 // @namespace    https://example.com/
-// @version      1.0.2
-// @description  Display a digital clock that synchronizes with the server time at the start of every minute and highlights the 11s→23s booking window.
+// @version      1.0.3
+// @description  Display a digital clock that synchronizes with the server time at the start of every minute and highlights the 14s→28s booking window.
 // @match        *://*/*
 // @run-at       document-end
 // @grant        none

@@ -1,5 +1,5 @@
 name: build-and-release
-# Ensures distributables include the updated 11s→23s timing rules
+# Ensures distributables include the updated 14s→28s timing rules
 on:
   push:
     tags:
