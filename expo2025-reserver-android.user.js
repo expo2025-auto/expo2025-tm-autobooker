@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 来場予約（Android版）
 // @namespace    http://tampermonkey.net/
-// @version      3.1.3-android
+// @version      3.1.4-android
 // @author       You
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
@@ -1242,7 +1242,7 @@ async function syncServer({force=false}={}){
 }
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
-function delayUntilNextMinute_15s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(15,0);if(n.getSeconds()>15||(n.getSeconds()===15&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function delayUntilNextMinute_11s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(11,0);if(n.getSeconds()>11||(n.getSeconds()===11&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 const FORCED_RELOAD_KEY='nr_forced_reload_v1';
 function minuteBucket(now){const t=now instanceof Date?now.getTime():Number(now);if(!Number.isFinite(t))return 0;return Math.floor(t/60000)}
 function readForcedReloadState(){try{const raw=sessionStorage.getItem(FORCED_RELOAD_KEY);if(!raw)return{minute:0,count:0};const parsed=JSON.parse(raw);const minute=Number(parsed?.minute);const count=Number(parsed?.count);return{minute:Number.isFinite(minute)?minute:0,count:Number.isFinite(count)?count:0}}catch{return{minute:0,count:0}}}
@@ -1258,14 +1258,14 @@ function scheduleRetryOrNextMinute(){
   const now=serverNow();
   const sec=now.getSeconds()+now.getMilliseconds()/1000;
   const forcedState=getForcedReloadState(now);
-  if(sec<25&&forcedState.count<3){
+  if(sec<23&&forcedState.count<3){
     ui.setStatus('再試行中');
     clearTimeout(Tm);
     incrementForcedReload(now);
     safeReload();
     return;
   }
-  const d=delayUntilNextMinute_15s();
+  const d=delayUntilNextMinute_11s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
@@ -1435,18 +1435,18 @@ async function runCycle(){
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
   if(!forceScanActive){
-    if(sec<15){
+    if(sec<11){
       resetForcedReload();
-      const d=delayUntilNextMinute_15s();
+      const d=delayUntilNextMinute_11s();
       ui.setStatus('待機中');
       clearTimeout(Tm);
       Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
       return;
     }
 
-    if(sec>=25){
+    if(sec>=23){
       resetForcedReload();
-      const d=delayUntilNextMinute_15s();
+      const d=delayUntilNextMinute_11s();
       ui.setStatus('再試行中');
       clearTimeout(Tm);
       Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
@@ -1495,7 +1495,7 @@ async function runCycle(){
   }
 
   resetForcedReload();
-  const d=delayUntilNextMinute_15s();
+  const d=delayUntilNextMinute_11s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();resetForcedReload();safeReload()}},d);
