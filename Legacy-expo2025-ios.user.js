@@ -372,16 +372,82 @@ async function waitEnabled(selOrEl,timeout=10000){
 }
 async function flowConfirm(targetISO){
   if(selectedDateISO()!==targetISO)return false;
+  const clickedButtons=new Set();
   const host='#__next > div > div > main > div > div.style_main__add_cart_button__DCOw8';
   const primarySel=host+' .basic-btn.type2.style_full__ptzZq';
   let b=await waitEnabled(primarySel,12000)||await waitEnabled('button.basic-btn.type2.style_full__ptzZq',12000);
   if(!b||selectedDateISO()!==targetISO)return false;
+  const normalizedTextOf=el=>{
+    if(!el)return'';
+    const values=[];
+    if(el.textContent)values.push(el.textContent);
+    if(el.innerText&&el.innerText!==el.textContent)values.push(el.innerText);
+    if(el.getAttribute){
+      values.push(el.getAttribute('aria-label')||'');
+      values.push(el.getAttribute('title')||'');
+    }
+    return values.filter(Boolean).map(v=>String(v).replace(/\s+/g,'')).join('');
+  };
+  const matchesHints=(el,hints)=>{
+    if(!Array.isArray(hints)||!hints.length)return false;
+    const normalized=normalizedTextOf(el);
+    if(!normalized)return false;
+    return hints.some(h=>normalized.includes(h));
+  };
+  const setDateTextHints=['来場日時を設定する','来場日時を設定'];
+  const changeTextHints=['来場日時を変更する','来場日時を変更'];
+  const matchesSetDateText=el=>matchesHints(el,setDateTextHints);
+  const matchesChangeText=el=>matchesHints(el,changeTextHints);
+  const changeBtnSelectors=[
+    'div[role="status"] button.style_next_button__N_pbs',
+    'div[role="status"] button[data-message-code="SW_GP_DL_117_0413"]',
+    'div[role="status"] button',
+    'div.style_main__button__fac_Z button.style_next_button__N_pbs',
+    'div.style_main__button__fac_Z button',
+    'div[class*="toast"] button.style_next_button__N_pbs',
+    'div[class*="toast"] button',
+    'button.style_next_button__N_pbs',
+    'button[data-message-code="SW_GP_DL_117_0413"]'
+  ];
+  const findChangeBtn=(exclude=new Set())=>{
+    for(const sel of changeBtnSelectors){
+      const candidates=A(sel);
+      if(!candidates.length)continue;
+      for(const el of candidates){
+        if(exclude.has(el))continue;
+        if(!isEnabled(el)||!vis(el))continue;
+        if(matchesChangeText(el))return el;
+      }
+    }
+    return null;
+  };
   KC(b);
+  clickedButtons.add(b);
+  if(selectedDateISO()!==targetISO)return false;
+  if(matchesSetDateText(b)){
+    let changeBtn=findChangeBtn(clickedButtons);
+    if(!changeBtn){
+      changeBtn=await waitUntil(()=>findChangeBtn(clickedButtons),{
+        timeout:5000,
+        interval:80,
+        attrs:['class','style','aria-hidden','data-disabled','data-message-code']
+      });
+    }
+    if(changeBtn){
+      KC(changeBtn);
+      clickedButtons.add(changeBtn);
+    }
+  }
   if(selectedDateISO()!==targetISO)return false;
   const confirmSelList=['button.style_next_button__N_pbs','button:has(span.btn-text), a:has(span.btn-text)'];
   for(const sel of confirmSelList){
+    const existing=typeof sel==='string'?Q(sel):sel;
+    if(existing&&clickedButtons.has(existing))continue;
     const c=await waitEnabled(sel,8000);
-    if(c){ KC(c); break; }
+    if(!c||clickedButtons.has(c))continue;
+    KC(c);
+    clickedButtons.add(c);
+    break;
   }
   return true;
 }
