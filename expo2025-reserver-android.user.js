@@ -11,6 +11,8 @@
 // @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
 
+const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
+
 /* ========= ユーティリティ ========= */
 const CONF_KEY='nr_conf_v1',STATE_KEY='nr_state_v1';
 function Lget(k){try{return JSON.parse(localStorage.getItem(k)||'{}')}catch{return{}}}
@@ -1275,9 +1277,12 @@ ui=(()=>{const w=document.createElement('div');
 Object.assign(w.style,{position:'fixed',bottom:'20px',right:'20px',zIndex:999999,background:'rgba(255,255,255,.95)',padding:'10px 12px',borderRadius:'12px',boxShadow:'0 2px 10px rgba(0,0,0,.2)',fontFamily:'-apple-system,system-ui,Segoe UI,Roboto,sans-serif',width:'320px'});
 const row=m=>{const d=document.createElement('div');Object.assign(d.style,{display:'flex',gap:'8px',alignItems:'center',marginBottom:(m??8)+'px'});return d};
 const rTop=row();
+const titleBox=document.createElement('div');Object.assign(titleBox.style,{display:'flex',alignItems:'baseline',gap:'6px',flex:'1'});
 const title=document.createElement('div');title.textContent='自動新規予約';title.style.fontWeight='bold';
+const version=document.createElement('span');version.textContent=`v${SCRIPT_VERSION}`;Object.assign(version.style,{fontSize:'11px',color:'#555'});
+titleBox.appendChild(title);titleBox.appendChild(version);
 const tg=document.createElement('input');tg.type='checkbox';tg.checked=!!state.r;
-rTop.appendChild(title);rTop.appendChild(tg);
+rTop.appendChild(titleBox);rTop.appendChild(tg);
 const keepRow=row();
 const keepLabelBox=document.createElement('label');Object.assign(keepLabelBox.style,{display:'flex',alignItems:'center',gap:'6px',fontSize:'12px',flex:'1'});
 const keepText=document.createElement('span');keepText.textContent='ログイン維持用リロードON・OFF';
