@@ -37,8 +37,8 @@
 - `tryOnceForDate`は日付確定→スロット確保→`flowConfirm`→`waitOutcome`の流れをまとめ、UIへ候補スロットを表示する。満席 (`ng`) 結果では`ensureForceScanAtLeast(2)`で次サイクルの探索強度を上げる。【F:expo2025-reserver.user.js†L1100-L1235】
 
 ## 9. サーバ時刻同期とリロード戦略
-- `syncServer`は`HEAD /`で`Date`ヘッダを取得し、`serverOffset`を算出する。60秒以内の再取得を抑制し、並行実行は`pendingServerSync`で共有する。`serverNow`・`secondsInMinute`・`delayUntilNextMinute_11s`で11秒トリガーの待機時間を算出する。【F:expo2025-reserver.user.js†L1238-L1266】
-- `FORCED_RELOAD_KEY`に分単位の`minute`と`count`を保存し、`incrementForcedReload`が1分あたり最大3回まで強制リロードを許容する。`scheduleRetryOrNextMinute`はサーバ時刻が23秒未満かつ回数未満なら即リロードし、閾値超過時は次の11秒まで待機して`safeReload`を予約する。【F:expo2025-reserver.user.js†L1267-L1292】
+- `syncServer`は`HEAD /`で`Date`ヘッダを取得し、`serverOffset`を算出する。60秒以内の再取得を抑制し、並行実行は`pendingServerSync`で共有する。`serverNow`・`secondsInMinute`・`delayUntilNextMinute_14s`で14秒トリガーの待機時間を算出する。【F:expo2025-reserver.user.js†L1238-L1266】
+- `FORCED_RELOAD_KEY`に分単位の`minute`と`count`を保存し、`incrementForcedReload`が1分あたり最大3回まで強制リロードを許容する。`scheduleRetryOrNextMinute`はサーバ時刻が28秒未満かつ回数未満なら即リロードし、閾値超過時は次の14秒まで待機して`safeReload`を予約する。【F:expo2025-reserver.user.js†L1267-L1292】
 
 ## 10. UIウィジェット構成とイベント
 - 固定配置のカードUIに自動予約トグル、ログイン維持トグル、指定時刻入力、現在時刻表示、時間帯チェックボックス、日付追加フォーム、選択日チップ、ステータス表示、変更先候補表示を備える。フォントや影などのスタイルもスクリプト側で指定している。【F:expo2025-reserver.user.js†L1294-L1380】
@@ -50,8 +50,8 @@
 
 ## 11. メインループとリトライ制御
 - `runCycle`は券種選択ページ表示、成功モーダル表示、失敗モーダル表示中、`state.r`がfalse、`keepAlive`中といった条件で早期リターンし、該当しない場合のみ探索に進む。【F:expo2025-reserver.user.js†L1434-L1445】
-- サーバ時刻で11秒未満は待機、23秒以上は次分へ回し、11〜23秒帯で空き枠探索を実行する。対象日リストを可視性と活性度で優先順位付けし、`tryOnceForDate`で予約試行を行う。成功時は`stopOK`で自動停止、券種選択遷移はステータス表示のみ、満席時は`ensureForceScanAtLeast(2)`で次サイクルを強化する。【F:expo2025-reserver.user.js†L1454-L1535】
-- 探索終了後は`resetForcedReload`でカウンタをクリアし、次の11秒まで`safeReload`をタイマー登録する。`stopOK`は自動停止とUI更新、強制リロードカウンタのリセットを一括で処理する。【F:expo2025-reserver.user.js†L1435-L1436】【F:expo2025-reserver.user.js†L1530-L1535】
+- サーバ時刻で14秒未満は待機、28秒以上は次分へ回し、14〜28秒帯で空き枠探索を実行する。対象日リストを可視性と活性度で優先順位付けし、`tryOnceForDate`で予約試行を行う。成功時は`stopOK`で自動停止、券種選択遷移はステータス表示のみ、満席時は`ensureForceScanAtLeast(2)`で次サイクルを強化する。【F:expo2025-reserver.user.js†L1454-L1535】
+- 探索終了後は`resetForcedReload`でカウンタをクリアし、次の14秒まで`safeReload`をタイマー登録する。`stopOK`は自動停止とUI更新、強制リロードカウンタのリセットを一括で処理する。【F:expo2025-reserver.user.js†L1435-L1436】【F:expo2025-reserver.user.js†L1530-L1535】
 
 ## 12. トレース・監視機能
 - `state.keepAlive`がONの初期状態では即ステータスを更新し、`syncServer({force:true})`と250ms周期の時計更新・`checkAutoSwitch`を開始する。【F:expo2025-reserver.user.js†L1394-L1395】【F:expo2025-reserver.user.js†L1428-L1432】
