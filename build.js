@@ -3,7 +3,7 @@ const path = require('path');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 const repoUrl = (pkg.repository && pkg.repository.url) || '';
-// Expect: https://github.com/USER/REPO.git
+// Expect: https://github.com/USER/REPO.git (scripts assume 11s→23s minute windows)
 const m = repoUrl.match(/github\.com\/([^\/]+)\/([^\.]+)(?:\.git)?$/i);
 if (!m) {
   console.error('[build] package.json.repository.url が GitHub URL ではありません:', repoUrl);

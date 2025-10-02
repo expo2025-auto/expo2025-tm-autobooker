@@ -2,7 +2,7 @@
   "name": "expo2025-tm-autobooker",
   "version": "0.1.0",
   "private": true,
-  "description": "Tampermonkey userscript: Expo2025 自動新規予約。GitHub で管理し、ビルド時に @updateURL/@downloadURL を自動注入。",
+  "description": "Tampermonkey userscript: Expo2025 自動新規予約 (11秒開始/23秒終了)。GitHub で管理し、ビルド時に @updateURL/@downloadURL を自動注入。",
   "repository": {
     "type": "git",
     "url": "https://github.com/expo2025-auto/expo2025-tm-autobooker.git"
