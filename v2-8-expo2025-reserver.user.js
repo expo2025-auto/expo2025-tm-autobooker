@@ -938,16 +938,16 @@ let serverOffset=0;
 async function syncServer(){try{const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});const dh=res.headers.get('date');if(dh){const sv=new Date(dh).getTime();serverOffset=sv-Date.now()}}catch{}}
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
-function delayUntilNextMinute_43s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(43,0);if(n.getSeconds()>43||(n.getSeconds()===43&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function delayUntilNextMinute_15s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(15,0);if(n.getSeconds()>15||(n.getSeconds()===15&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 function scheduleRetryOrNextMinute(){
   const sec=secondsInMinute();
-  if(sec<53){
+  if(sec<25){
     if(state.r){
       ui.setStatus('再試行中');
       safeReload();
     }
   }else{
-    const d=delayUntilNextMinute_43s();
+    const d=delayUntilNextMinute_15s();
     ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
@@ -1075,16 +1075,16 @@ async function runCycle(){
 
   await syncServer().catch(()=>{});
   const sec=secondsInMinute();
-  if(sec<43){
-    const d=delayUntilNextMinute_43s();
+  if(sec<15){
+    const d=delayUntilNextMinute_15s();
     ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
     return;
   }
 
-  if(sec>=53){
-    const d=delayUntilNextMinute_43s();
+  if(sec>=25){
+    const d=delayUntilNextMinute_15s();
     ui.setStatus('再試行中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
@@ -1131,7 +1131,7 @@ async function runCycle(){
     if(r==='ng'){ui.setStatus('再試行中');break}
   }
 
-  const d=delayUntilNextMinute_43s();
+  const d=delayUntilNextMinute_15s();
   ui.setStatus('待機中');
   clearTimeout(Tm);
   Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
