@@ -14,6 +14,8 @@
 
 (function(){'use strict';
 
+const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
+
 /* ========= ユーティリティ ========= */
 const CONF_KEY='nr_conf_v1',STATE_KEY='nr_state_v1';
 function Lget(k){try{return JSON.parse(localStorage.getItem(k)||'{}')}catch{return{}}}
@@ -695,13 +697,20 @@ const ui=(()=>{
     return d;
   };
   const rTop=row();
+  const titleBox=document.createElement('div');
+  Object.assign(titleBox.style,{display:'flex',alignItems:'baseline',gap:'6px',flex:'1'});
   const title=document.createElement('div');
   title.textContent='自動新規予約';
   title.style.fontWeight='bold';
+  const version=document.createElement('span');
+  version.textContent=`v${SCRIPT_VERSION}`;
+  Object.assign(version.style,{fontSize:'11px',color:'#555'});
+  titleBox.appendChild(title);
+  titleBox.appendChild(version);
   const tg=document.createElement('input');
   tg.type='checkbox';
   tg.checked=!!state.r;
-  rTop.appendChild(title);
+  rTop.appendChild(titleBox);
   rTop.appendChild(tg);
   const rTime=row(6);
   const labT=document.createElement('label');

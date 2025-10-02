@@ -9,9 +9,14 @@
 // ==/UserScript==
 
 (() => {
+  const SCRIPT_VERSION = (typeof GM_info !== 'undefined' && GM_info?.script?.version) || 'dev';
   const CLOCK_ID = 'simple-clock';
+  const CLOCK_TIME_CLASS = 'simple-clock__time';
+  const CLOCK_VERSION_CLASS = 'simple-clock__version';
   const SYNC_ENDPOINT = window.location.origin;
   let clockElement = null;
+  let timeDisplay = null;
+  let versionDisplay = null;
 
   let offset = 0;
   let syncTimeoutId = null;
@@ -24,7 +29,10 @@
     const hours = pad(now.getHours());
     const minutes = pad(now.getMinutes());
     const seconds = pad(now.getSeconds());
-    ensureClockElement().textContent = `${hours}:${minutes}:${seconds}`;
+    ensureClockElement();
+    if (timeDisplay) {
+      timeDisplay.textContent = `${hours}:${minutes}:${seconds}`;
+    }
   };
 
   const scheduleNextSync = () => {
@@ -68,6 +76,7 @@
 
   const ensureClockElement = () => {
     if (clockElement && document.body.contains(clockElement)) {
+      ensureClockStructure(clockElement);
       return clockElement;
     }
 
@@ -75,6 +84,7 @@
     if (existing && document.body.contains(existing)) {
       clockElement = existing;
       applyClockStyles(clockElement);
+      ensureClockStructure(clockElement);
       return clockElement;
     }
 
@@ -83,6 +93,7 @@
     applyClockStyles(el);
     document.body.appendChild(el);
     clockElement = el;
+    ensureClockStructure(el);
     return clockElement;
   };
 
@@ -92,8 +103,10 @@
     el.style.top = '50%';
     el.style.transform = 'translateY(-50%)';
     el.style.fontFamily = 'monospace';
-    el.style.fontSize = '2rem';
-    el.style.letterSpacing = '0.1em';
+    el.style.display = 'flex';
+    el.style.flexDirection = 'column';
+    el.style.alignItems = 'flex-start';
+    el.style.gap = '0.25rem';
     el.style.textAlign = 'left';
     el.style.padding = '0.5rem 1rem';
     el.style.background = 'rgba(0, 0, 0, 0.65)';
@@ -103,6 +116,45 @@
     el.style.zIndex = '2147483647';
     el.style.pointerEvents = 'none';
     el.style.userSelect = 'none';
+  }
+
+  function applyTimeStyles(el) {
+    el.style.fontSize = '2rem';
+    el.style.letterSpacing = '0.1em';
+    el.style.lineHeight = '1';
+  }
+
+  function applyVersionStyles(el) {
+    el.style.fontSize = '0.75rem';
+    el.style.opacity = '0.8';
+    el.style.letterSpacing = '0.05em';
+  }
+
+  function ensureClockStructure(el) {
+    if (!el) {
+      return;
+    }
+    timeDisplay = el.querySelector(`.${CLOCK_TIME_CLASS}`);
+    if (!timeDisplay) {
+      timeDisplay = document.createElement('div');
+      timeDisplay.className = CLOCK_TIME_CLASS;
+      applyTimeStyles(timeDisplay);
+      el.appendChild(timeDisplay);
+    } else {
+      applyTimeStyles(timeDisplay);
+    }
+
+    versionDisplay = el.querySelector(`.${CLOCK_VERSION_CLASS}`);
+    if (!versionDisplay) {
+      versionDisplay = document.createElement('div');
+      versionDisplay.className = CLOCK_VERSION_CLASS;
+      applyVersionStyles(versionDisplay);
+      el.appendChild(versionDisplay);
+    } else {
+      applyVersionStyles(versionDisplay);
+    }
+
+    versionDisplay.textContent = `v${SCRIPT_VERSION}`;
   }
 
   const init = () => {
