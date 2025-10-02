@@ -1148,16 +1148,36 @@ async function showMonthForISO(iso){
 }
 
 /* ========= 1日分の試行 ========= */
-async function tryOnceForDate(d){
+async function tryOnceForDate(d,{skipDisabled=false}={}){
   const iso=isoOf(d);
   setAttemptReservationDisplay({iso});
   const calOK=await waitCalendarReady(5000);
   if(!calOK) return 'none';
 
   // まず今の月を見て、なければ10月指定時のみページ送り
-  if(!getCellByISO(iso)){
+  let cellCurrent=getCellByISO(iso);
+  if(skipDisabled&&cellCurrent&&!isDateCellEnabled(cellCurrent)){
+    return 'notSelectable';
+  }
+  if(!cellCurrent){
     const shown = await showMonthForISO(iso);
     if(!shown) return 'none';
+    cellCurrent=getCellByISO(iso);
+  }
+  if(skipDisabled&&cellCurrent&&!isDateCellEnabled(cellCurrent)){
+    return 'notSelectable';
+  }
+  if(cellCurrent&&!isDateCellEnabled(cellCurrent)){
+    const deadline=Date.now()+600;
+    while(Date.now()<deadline){
+      await new Promise(res=>setTimeout(res,80));
+      const refreshed=getCellByISO(iso);
+      if(refreshed&&isDateCellEnabled(refreshed)){cellCurrent=refreshed;break;}
+      if(!refreshed){cellCurrent=null;break;}
+    }
+    if(!cellCurrent||!isDateCellEnabled(cellCurrent)){
+      return 'notSelectable';
+    }
   }
 
   const selOK=await ensureDate(iso,8000);
@@ -1480,10 +1500,23 @@ async function runCycle(){
   }
 
   // 予約試行
-  for(const ds of conf.dates){
+  const plannedDates=conf.dates
+    .map((ds,idx)=>{
+      const cell=getCellByISO(ds);
+      const enabled=cell&&isDateCellEnabled(cell);
+      const visible=!!cell;
+      return{
+        iso:ds,
+        index:idx,
+        priority:enabled?0:(visible?1:2),
+        skipDisabled:visible&&!enabled
+      };
+    })
+    .sort((a,b)=>a.priority!==b.priority?a.priority-b.priority:a.index-b.index);
+  for(const item of plannedDates){
     ui.setStatus('予約試行中');
-    const d=new Date(ds+'T00:00:00');
-    const r=await tryOnceForDate(d);
+    const d=new Date(item.iso+'T00:00:00');
+    const r=await tryOnceForDate(d,{skipDisabled:item.skipDisabled});
     if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
     if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');return}
     if(r==='ng'){ensureForceScanAtLeast(2);ui.setStatus('再試行中');break}
