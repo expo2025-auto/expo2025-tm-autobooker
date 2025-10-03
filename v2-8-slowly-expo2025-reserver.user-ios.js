@@ -72,14 +72,16 @@ function renderReady(){
 async function waitForRenderReady(timeout=RENDER_READY_TIMEOUT_MS){
   const start=Date.now();
   while(Date.now()-start<timeout){
-    if(renderReady())break;
+    if(renderReady()){await waitFrames(RENDER_READY_EXTRA_FRAMES);return true;}
     await waitMs(RENDER_READY_CHECK_INTERVAL);
   }
-  await waitFrames(RENDER_READY_EXTRA_FRAMES);
+  return false;
 }
 async function reloadAfterRender({requireActive=true,resetFailCount=true}={}){
   if(requireActive&&!state.r)return;
-  try{await waitForRenderReady()}catch{}
+  let ready=false;
+  try{ready=await waitForRenderReady()}catch{}
+  if(!ready)return;
   if(resetFailCount)try{resetFail()}catch{}
   queueSafeReload(RELOAD_DELAY_OFFSET_MS);
 }
