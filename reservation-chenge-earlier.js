@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Expo2025 予約変更用
-// @namespace    https://github.com/expo-automation/expo2025-tm-autobooker
+// @namespace    http://tampermonkey.net/
 // @version      0.5
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内4回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/reservation-chenge-earlier.js
