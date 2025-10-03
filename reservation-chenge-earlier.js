@@ -61,6 +61,11 @@
   // トグル保存キー
   const ENABLE_KEY = 'expo_adv_enable_v2';
   const DATE_PREFERENCE_KEY = 'expo_adv_target_date_pref_v1';
+  const TARGET_TIME_PREFERENCE_KEY = 'expo_adv_target_time_pref_v1';
+  const TARGET_TIME_OPTIONS = [
+    { minutes: 9 * 60, label: '9時' },
+    { minutes: 10 * 60, label: '10時' },
+  ];
   const PREFERRED_SLOT_MINUTES = [9 * 60, 10 * 60, 11 * 60, 12 * 60];
   let enabledFallback = false;
 
@@ -78,12 +83,15 @@
   let reloadsThisMinute = 0;
   let sameDayPreference = true;
   let targetDatePreference = '';
+  let targetTimePreferences = {};
   let sameDayCheckboxControl = null;
   let dateInputControl = null;
+  let timeCheckboxControls = new Map();
   let lastTargetDateLogKey = '';
   let lastTargetDateLogTime = 0;
 
   initializeDatePreferenceState();
+  initializeTimePreferenceState();
 
   function setStatus(state) {
     currentStatus = state;
@@ -185,6 +193,23 @@
     }
   }
 
+  function loadTimePreferences() {
+    try {
+      const stored = sessionStorage.getItem(TARGET_TIME_PREFERENCE_KEY);
+      if (!stored) return {};
+      const parsed = JSON.parse(stored);
+      if (!parsed || typeof parsed !== 'object') return {};
+      const normalized = {};
+      for (const option of TARGET_TIME_OPTIONS) {
+        const key = String(option.minutes);
+        normalized[key] = !!parsed[key];
+      }
+      return normalized;
+    } catch {
+      return {};
+    }
+  }
+
   function saveDatePreferences() {
     const payload = {
       sameDay: sameDayPreference,
@@ -192,6 +217,19 @@
     };
     try {
       sessionStorage.setItem(DATE_PREFERENCE_KEY, JSON.stringify(payload));
+    } catch {
+      // storage unavailable
+    }
+  }
+
+  function saveTimePreferences() {
+    const payload = {};
+    for (const option of TARGET_TIME_OPTIONS) {
+      const key = String(option.minutes);
+      payload[key] = !!targetTimePreferences[key];
+    }
+    try {
+      sessionStorage.setItem(TARGET_TIME_PREFERENCE_KEY, JSON.stringify(payload));
     } catch {
       // storage unavailable
     }
@@ -209,6 +247,11 @@
     }
   }
 
+  function initializeTimePreferenceState() {
+    targetTimePreferences = loadTimePreferences();
+    updateTimeControlState();
+  }
+
   function updateDateControlState() {
     if (sameDayCheckboxControl) {
       sameDayCheckboxControl.checked = sameDayPreference;
@@ -216,6 +259,16 @@
     if (dateInputControl) {
       dateInputControl.disabled = sameDayPreference;
       dateInputControl.value = targetDatePreference;
+    }
+  }
+
+  function updateTimeControlState() {
+    if (!timeCheckboxControls || timeCheckboxControls.size === 0) return;
+    for (const option of TARGET_TIME_OPTIONS) {
+      const checkbox = timeCheckboxControls.get(option.minutes);
+      if (checkbox) {
+        checkbox.checked = !!targetTimePreferences[String(option.minutes)];
+      }
     }
   }
 
@@ -249,6 +302,33 @@
 
   function getTargetDatePreference() {
     return targetDatePreference;
+  }
+
+  function setTimePreference(minutes, enabled) {
+    const key = String(minutes);
+    const next = !!enabled;
+    if (targetTimePreferences[key] === next) return;
+    targetTimePreferences[key] = next;
+    saveTimePreferences();
+    updateTimeControlState();
+  }
+
+  function getPreferredTargetMinutes() {
+    const result = [];
+    for (const option of TARGET_TIME_OPTIONS) {
+      if (targetTimePreferences[String(option.minutes)]) {
+        result.push(option.minutes);
+      }
+    }
+    return result;
+  }
+
+  function describePreferredTimes(minutesList) {
+    if (!minutesList || !minutesList.length) return '';
+    const labels = TARGET_TIME_OPTIONS
+      .filter((option) => minutesList.includes(option.minutes))
+      .map((option) => option.label);
+    return labels.join('、');
   }
 
   function logTargetDateMessage(key, message, intervalMs = 5000) {
@@ -1153,6 +1233,17 @@
       }
     }
 
+    const preferredMinutes = getPreferredTargetMinutes();
+    if (preferredMinutes.length) {
+      const preferredSet = new Set(preferredMinutes);
+      const filtered = candidates.filter((entry) => entry.info && preferredSet.has(entry.info.minutes));
+      if (!filtered.length) {
+        log(`指定した時間帯（${describePreferredTimes(preferredMinutes)}）に空き枠がありませんでした`);
+        return { status: 'no-slot', checked: true };
+      }
+      candidates = filtered;
+    }
+
     candidates.sort((a, b) => {
       const priorityDiff = getSlotPriority(a.info.minutes) - getSlotPriority(b.info.minutes);
       if (priorityDiff !== 0) return priorityDiff;
@@ -1335,7 +1426,15 @@
       }
       sameDayCheckboxControl = existingWrap.querySelector('#expo-adv-same-day');
       dateInputControl = existingWrap.querySelector('#expo-adv-date-input');
+      timeCheckboxControls = new Map();
+      for (const option of TARGET_TIME_OPTIONS) {
+        const checkbox = existingWrap.querySelector(`#expo-adv-time-${option.minutes}`);
+        if (checkbox) {
+          timeCheckboxControls.set(option.minutes, checkbox);
+        }
+      }
       updateDateControlState();
+      updateTimeControlState();
       return;
     }
     const wrap = document.createElement('div');
@@ -1448,7 +1547,39 @@
     dateInputControl = dateInput;
     updateDateControlState();
 
-    wrap.append(btn, statusWrap, currentSlotWrap, dateControlWrap, nextUpdateWrap);
+    const timeControlWrap = document.createElement('span');
+    timeControlWrap.id = 'expo-adv-time-control';
+    Object.assign(timeControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const timeControlLabel = document.createElement('span');
+    timeControlLabel.textContent = '対象時間:';
+
+    const timeOptionsContainer = document.createElement('span');
+    Object.assign(timeOptionsContainer.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+
+    timeCheckboxControls = new Map();
+    for (const option of TARGET_TIME_OPTIONS) {
+      const label = document.createElement('label');
+      label.htmlFor = `expo-adv-time-${option.minutes}`;
+      Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = `expo-adv-time-${option.minutes}`;
+
+      checkbox.addEventListener('change', () => {
+        setTimePreference(option.minutes, checkbox.checked);
+      });
+
+      label.append(checkbox, document.createTextNode(option.label));
+      timeOptionsContainer.append(label);
+      timeCheckboxControls.set(option.minutes, checkbox);
+    }
+
+    timeControlWrap.append(timeControlLabel, timeOptionsContainer);
+    updateTimeControlState();
+
+    wrap.append(btn, statusWrap, currentSlotWrap, dateControlWrap, timeControlWrap, nextUpdateWrap);
     document.documentElement.appendChild(wrap);
 
     if (!nextUpdateTimerId) {
