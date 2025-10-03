@@ -60,6 +60,8 @@
 
   // トグル保存キー
   const ENABLE_KEY = 'expo_adv_enable_v2';
+  const DATE_PREFERENCE_KEY = 'expo_adv_target_date_pref_v1';
+  const PREFERRED_SLOT_MINUTES = [9 * 60, 10 * 60, 11 * 60, 12 * 60];
   let enabledFallback = false;
 
   const STATUS_LABELS = {
@@ -74,6 +76,14 @@
   let nextUpdateIndicator;
   let nextUpdateTimerId = null;
   let reloadsThisMinute = 0;
+  let sameDayPreference = true;
+  let targetDatePreference = '';
+  let sameDayCheckboxControl = null;
+  let dateInputControl = null;
+  let lastTargetDateLogKey = '';
+  let lastTargetDateLogTime = 0;
+
+  initializeDatePreferenceState();
 
   function setStatus(state) {
     currentStatus = state;
@@ -113,6 +123,141 @@
       return `${seconds}秒`;
     }
     return `${(clamped / 1000).toFixed(1)}秒`;
+  }
+
+  function zeroPad(num, width = 2) {
+    return String(num).padStart(width, '0');
+  }
+
+  function normalizeDateValue(value) {
+    if (!value) return '';
+    const raw = String(value).trim();
+    if (!raw) return '';
+    const iso = raw.match(/(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})/);
+    if (iso) {
+      const y = parseInt(iso[1], 10);
+      const m = parseInt(iso[2], 10);
+      const d = parseInt(iso[3], 10);
+      if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+        return `${zeroPad(y, 4)}-${zeroPad(m)}-${zeroPad(d)}`;
+      }
+    }
+    const compact = raw.match(/(\d{4})(\d{2})(\d{2})/);
+    if (compact) {
+      const y = parseInt(compact[1], 10);
+      const m = parseInt(compact[2], 10);
+      const d = parseInt(compact[3], 10);
+      if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+        return `${zeroPad(y, 4)}-${zeroPad(m)}-${zeroPad(d)}`;
+      }
+    }
+    const jp = raw.match(/(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日/);
+    if (jp) {
+      const y = parseInt(jp[1], 10);
+      const m = parseInt(jp[2], 10);
+      const d = parseInt(jp[3], 10);
+      if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+        return `${zeroPad(y, 4)}-${zeroPad(m)}-${zeroPad(d)}`;
+      }
+    }
+    const jpNoYear = raw.match(/(\d{1,2})月\s*(\d{1,2})日/);
+    if (jpNoYear) {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = parseInt(jpNoYear[1], 10);
+      const d = parseInt(jpNoYear[2], 10);
+      if (Number.isFinite(m) && Number.isFinite(d)) {
+        return `${zeroPad(y, 4)}-${zeroPad(m)}-${zeroPad(d)}`;
+      }
+    }
+    return '';
+  }
+
+  function loadDatePreferences() {
+    try {
+      const stored = sessionStorage.getItem(DATE_PREFERENCE_KEY);
+      if (!stored) return {};
+      const parsed = JSON.parse(stored);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return parsed;
+    } catch {
+      return {};
+    }
+  }
+
+  function saveDatePreferences() {
+    const payload = {
+      sameDay: sameDayPreference,
+      targetDate: targetDatePreference,
+    };
+    try {
+      sessionStorage.setItem(DATE_PREFERENCE_KEY, JSON.stringify(payload));
+    } catch {
+      // storage unavailable
+    }
+  }
+
+  function initializeDatePreferenceState() {
+    const stored = loadDatePreferences();
+    const normalized = normalizeDateValue(stored.targetDate);
+    if (stored.sameDay === false && normalized) {
+      sameDayPreference = false;
+      targetDatePreference = normalized;
+    } else {
+      sameDayPreference = true;
+      targetDatePreference = '';
+    }
+  }
+
+  function updateDateControlState() {
+    if (sameDayCheckboxControl) {
+      sameDayCheckboxControl.checked = sameDayPreference;
+    }
+    if (dateInputControl) {
+      dateInputControl.disabled = sameDayPreference;
+      dateInputControl.value = targetDatePreference;
+    }
+  }
+
+  function setSameDayPreference(next) {
+    const normalized = !!next;
+    if (normalized) {
+      sameDayPreference = true;
+      targetDatePreference = '';
+    } else {
+      sameDayPreference = false;
+    }
+    saveDatePreferences();
+    updateDateControlState();
+  }
+
+  function setTargetDatePreference(value) {
+    const normalized = normalizeDateValue(value);
+    targetDatePreference = normalized;
+    if (normalized) {
+      sameDayPreference = false;
+    } else {
+      sameDayPreference = true;
+    }
+    saveDatePreferences();
+    updateDateControlState();
+  }
+
+  function isSameDayPreference() {
+    return sameDayPreference;
+  }
+
+  function getTargetDatePreference() {
+    return targetDatePreference;
+  }
+
+  function logTargetDateMessage(key, message, intervalMs = 5000) {
+    const now = Date.now();
+    if (key !== lastTargetDateLogKey || now - lastTargetDateLogTime > intervalMs) {
+      log(message);
+      lastTargetDateLogKey = key;
+      lastTargetDateLogTime = now;
+    }
   }
 
   function getSyncedNowMs() {
@@ -772,6 +917,53 @@
     return '';
   }
 
+  const SLOT_DATE_ATTRIBUTE_KEYS = [
+    'data-date-value',
+    'data-date',
+    'data-day',
+    'data-day-value',
+    'data-target-date',
+    'data-current-date',
+    'data-selected-date',
+  ];
+
+  function getSlotDateKey(button) {
+    if (!button) return '';
+    const candidates = [];
+    let current = button;
+    let depth = 0;
+    while (current && depth < 6) {
+      for (const attr of SLOT_DATE_ATTRIBUTE_KEYS) {
+        if (current.hasAttribute && current.hasAttribute(attr)) {
+          const value = current.getAttribute(attr);
+          if (value) {
+            candidates.push(value);
+          }
+        }
+      }
+      current = current.parentElement;
+      depth += 1;
+    }
+    for (const candidate of candidates) {
+      const normalized = normalizeDateValue(candidate);
+      if (normalized) return normalized;
+    }
+    const scopeLabel = describeSlotScope(button);
+    const normalizedScope = normalizeDateValue(scopeLabel);
+    if (normalizedScope) return normalizedScope;
+    const ariaLabel = button.getAttribute ? button.getAttribute('aria-label') : '';
+    const normalizedAria = normalizeDateValue(ariaLabel);
+    if (normalizedAria) return normalizedAria;
+    return '';
+  }
+
+  function getSlotPriority(minutes) {
+    if (!Number.isFinite(minutes)) return Number.POSITIVE_INFINITY;
+    const idx = PREFERRED_SLOT_MINUTES.indexOf(minutes);
+    if (idx >= 0) return idx;
+    return PREFERRED_SLOT_MINUTES.length + (10_000 - minutes);
+  }
+
   async function tryReservationChangeOnPrevSlot() {
     let confirmedCurrentSlot = false;
     const buttons = collectSlotButtons();
@@ -785,6 +977,7 @@
       const hints = collectActiveHints(btn);
       const text = (btn.innerText || btn.textContent || '').trim();
       const scopeSignature = getSlotScopeSignature(btn);
+      const dateKey = getSlotDateKey(btn);
       const activeScore = scoreActiveHints(hints);
       return {
         el: btn,
@@ -794,6 +987,7 @@
         scopeSignature,
         activeScore,
         selectable: false,
+        dateKey,
       };
     });
 
@@ -923,20 +1117,47 @@
     confirmedCurrentSlot = true;
     lastSuccessfulCheckTime = Date.now();
 
-    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentEntry.el);
+    let candidates = [];
+    let targetDateKeyForLog = '';
 
-    const candidates = candidateButtons
-      .map((btn) => entryByElement.get(btn))
-      .filter((entry) => {
+    if (isSameDayPreference()) {
+      const candidateButtons = scopeButtonsToCurrentDay(buttons, currentEntry.el);
+      candidates = candidateButtons
+        .map((btn) => entryByElement.get(btn))
+        .filter((entry) => {
+          if (!entry || !entry.info || !entry.selectable) return false;
+          return entry.info.minutes < currentInfo.minutes;
+        });
+      if (!candidates.length) {
+        log('現在の予約時間より前で選択可能な枠はありません');
+        return { status: 'no-slot', checked: true };
+      }
+    } else {
+      const targetDateKey = getTargetDatePreference();
+      if (!targetDateKey) {
+        logTargetDateMessage('missing-date', '操作対象日を指定してください（「同日」チェックが外れています）。');
+        return { status: 'pending', checked: false };
+      }
+      targetDateKeyForLog = targetDateKey;
+      candidates = entries.filter((entry) => {
         if (!entry || !entry.info || !entry.selectable) return false;
+        if (entry.dateKey !== targetDateKey) return false;
         return entry.info.minutes < currentInfo.minutes;
-      })
-      .sort((a, b) => b.info.minutes - a.info.minutes);
-
-    if (!candidates.length) {
-      log('現在の予約時間より前で選択可能な枠はありません');
-      return { status: 'no-slot', checked: true };
+      });
+      if (!candidates.length) {
+        logTargetDateMessage(
+          `no-slot-${targetDateKey}`,
+          `対象日 ${targetDateKey} に現在の予約より早い空き枠は見つかりませんでした`,
+        );
+        return { status: 'no-slot', checked: true };
+      }
     }
+
+    candidates.sort((a, b) => {
+      const priorityDiff = getSlotPriority(a.info.minutes) - getSlotPriority(b.info.minutes);
+      if (priorityDiff !== 0) return priorityDiff;
+      return b.info.minutes - a.info.minutes;
+    });
 
     const target = candidates[0];
 
@@ -945,7 +1166,8 @@
       return { status: 'limit', checked: true };
     }
 
-    log(`前倒し候補を選択: ${target.info.label} (${target.info.text})`);
+    const targetDateSuffix = targetDateKeyForLog ? ` / 対象日: ${targetDateKeyForLog}` : '';
+    log(`前倒し候補を選択: ${target.info.label} (${target.info.text})${targetDateSuffix}`);
     target.el.click();
 
     const setBtn = await waitForButtonByText(SELECTORS.setVisitButtonText, {
@@ -1111,13 +1333,16 @@
       if (nextUpdateIndicator) {
         updateNextUpdateDisplay();
       }
+      sameDayCheckboxControl = existingWrap.querySelector('#expo-adv-same-day');
+      dateInputControl = existingWrap.querySelector('#expo-adv-date-input');
+      updateDateControlState();
       return;
     }
     const wrap = document.createElement('div');
     wrap.id = 'expo-adv-toggle';
     Object.assign(wrap.style, {
       position: 'fixed', top: '10px', left: '10px', zIndex: 999999,
-      display: 'flex', gap: '6px', alignItems: 'center',
+      display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap',
       background: '#fff', border: '1px solid #999', borderRadius: '10px',
       padding: '6px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
     });
@@ -1188,7 +1413,42 @@
 
     nextUpdateWrap.append(nextUpdateLabel, nextUpdateValue);
 
-    wrap.append(btn, statusWrap, currentSlotWrap, nextUpdateWrap);
+    const dateControlWrap = document.createElement('span');
+    dateControlWrap.id = 'expo-adv-date-control';
+    Object.assign(dateControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const dateControlLabel = document.createElement('span');
+    dateControlLabel.textContent = '操作対象日:';
+
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.id = 'expo-adv-date-input';
+    Object.assign(dateInput.style, { padding: '2px 4px' });
+
+    const sameDayLabel = document.createElement('label');
+    sameDayLabel.htmlFor = 'expo-adv-same-day';
+    Object.assign(sameDayLabel.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+
+    const sameDayCheckbox = document.createElement('input');
+    sameDayCheckbox.type = 'checkbox';
+    sameDayCheckbox.id = 'expo-adv-same-day';
+
+    sameDayLabel.append(sameDayCheckbox, document.createTextNode('同日'));
+
+    dateControlWrap.append(dateControlLabel, dateInput, sameDayLabel);
+
+    sameDayCheckbox.addEventListener('change', () => {
+      setSameDayPreference(sameDayCheckbox.checked);
+    });
+    dateInput.addEventListener('change', () => {
+      setTargetDatePreference(dateInput.value);
+    });
+
+    sameDayCheckboxControl = sameDayCheckbox;
+    dateInputControl = dateInput;
+    updateDateControlState();
+
+    wrap.append(btn, statusWrap, currentSlotWrap, dateControlWrap, nextUpdateWrap);
     document.documentElement.appendChild(wrap);
 
     if (!nextUpdateTimerId) {
