@@ -1,14 +1,6 @@
 // ==UserScript==
-// @name         V.2.8（ゆっくり）Expo2025 来場予約
-// @namespace    http://tampermonkey.net/
+// @name         V.2.8（ゆっくり）ios Expo2025 来場予約
 // @version      2.8.3-slow
-// @author       You
-// @match        https://ticket.expo2025.or.jp/*
-// @run-at       document-idle
-// @grant        none
-// @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/v2-8-slowly-expo2025-reserver.user.js
-// @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/v2-8-slowly-expo2025-reserver.user.js
-// @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
 
 const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
