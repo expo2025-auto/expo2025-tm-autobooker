@@ -1517,7 +1517,7 @@
     Object.assign(dateControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
 
     const dateControlLabel = document.createElement('span');
-    dateControlLabel.textContent = '操作対象日:';
+    dateControlLabel.textContent = '変更希望日:';
 
     const dateInput = document.createElement('input');
     dateInput.type = 'date';
@@ -1532,7 +1532,7 @@
     sameDayCheckbox.type = 'checkbox';
     sameDayCheckbox.id = 'expo-adv-same-day';
 
-    sameDayLabel.append(sameDayCheckbox, document.createTextNode('同日'));
+    sameDayLabel.append(sameDayCheckbox, document.createTextNode('同じ日'));
 
     dateControlWrap.append(dateControlLabel, dateInput, sameDayLabel);
 
@@ -1552,7 +1552,7 @@
     Object.assign(timeControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
 
     const timeControlLabel = document.createElement('span');
-    timeControlLabel.textContent = '対象時間:';
+    timeControlLabel.textContent = '希望時間:';
 
     const timeOptionsContainer = document.createElement('span');
     Object.assign(timeOptionsContainer.style, { display: 'flex', alignItems: 'center', gap: '6px' });
