@@ -15,11 +15,21 @@
 
   const STORAGE_KEY = '__nr_debug_logs_v1__';
   const MAX_LOGS = 600;
+  const RETAIN_PRE_MS = 30 * 1000;
+  const RETAIN_POST_MS = 10 * 1000;
   const LOG_PREFIX = '[NRDBG]';
   const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
+  const RETENTION_KEY = '__nr_debug_retention_v1__';
+  const TOP_PAGE_PATTERNS = [
+    /^https:\/\/reserve\.expo2025\.or\.jp\/?(?:[?#]|$)/i,
+    /^https:\/\/reserve-visitor\.expo2025\.or\.jp\/?(?:[?#]|$)/i,
+  ];
+
   const state = {
     logs: loadStoredLogs(),
+    retention: loadRetentionState(),
+    loggingDisabled: false,
   };
 
   function loadStoredLogs() {
@@ -27,10 +37,59 @@
       const stored = win.localStorage?.getItem(STORAGE_KEY);
       if (!stored) return [];
       const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) ? parsed : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map(normalizeLogEntry)
+        .filter(Boolean);
     } catch (err) {
       console.warn(LOG_PREFIX, 'Failed to load stored logs', err);
       return [];
+    }
+  }
+
+  function normalizeLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const normalized = Object.assign({}, entry);
+    if (typeof normalized.ts !== 'number') {
+      const parsed = Date.parse(normalized.at || '');
+      normalized.ts = Number.isFinite(parsed) ? parsed : Date.now();
+    }
+    if (typeof normalized.at !== 'string') {
+      normalized.at = new Date(normalized.ts).toISOString();
+    }
+    return normalized;
+  }
+
+  function loadRetentionState() {
+    try {
+      const stored = win.localStorage?.getItem(RETENTION_KEY);
+      if (!stored) return null;
+      const parsed = JSON.parse(stored);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const windowStart = Number(parsed.windowStart);
+      const windowEnd = Number(parsed.windowEnd);
+      const detectedAt = Number(parsed.detectedAt);
+      if (!Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) return null;
+      return {
+        windowStart,
+        windowEnd,
+        detectedAt: Number.isFinite(detectedAt) ? detectedAt : null,
+      };
+    } catch (err) {
+      console.warn(LOG_PREFIX, 'Failed to load retention state', err);
+      return null;
+    }
+  }
+
+  function saveRetentionState() {
+    try {
+      if (!state.retention) {
+        win.localStorage?.removeItem(RETENTION_KEY);
+      } else {
+        win.localStorage?.setItem(RETENTION_KEY, JSON.stringify(state.retention));
+      }
+    } catch (err) {
+      console.warn(LOG_PREFIX, 'Failed to persist retention state', err);
     }
   }
 
@@ -40,6 +99,80 @@
       win.localStorage?.setItem(STORAGE_KEY, JSON.stringify(keep));
     } catch (err) {
       console.warn(LOG_PREFIX, 'Failed to persist logs', err);
+    }
+  }
+
+  function getEntryTime(entry) {
+    if (!entry) return Date.now();
+    if (typeof entry.ts === 'number') return entry.ts;
+    const parsed = Date.parse(entry.at || '');
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  }
+
+  function applyRetentionPolicy() {
+    const now = Date.now();
+    if (!state.retention) {
+      const cutoff = now - RETAIN_PRE_MS;
+      state.logs = state.logs.filter(entry => getEntryTime(entry) >= cutoff);
+      return;
+    }
+
+    const { windowStart, windowEnd } = state.retention;
+    state.logs = state.logs.filter(entry => {
+      const ts = getEntryTime(entry);
+      return ts >= windowStart && ts <= windowEnd;
+    });
+
+    if (now > windowEnd) {
+      state.loggingDisabled = true;
+    }
+  }
+
+  function shouldStoreEntry(entry) {
+    if (!state.retention) return true;
+    const ts = getEntryTime(entry);
+    return ts >= state.retention.windowStart && ts <= state.retention.windowEnd;
+  }
+
+  function isTopPageUrl(url) {
+    if (typeof url !== 'string' || !url) return false;
+    let candidate = url;
+    try {
+      candidate = new URL(url, win.location?.href || undefined).href;
+    } catch {}
+    return TOP_PAGE_PATTERNS.some(pattern => pattern.test(candidate));
+  }
+
+  function extractCandidateUrls(detail) {
+    const urls = [];
+    if (!detail || typeof detail !== 'object') return urls;
+    if (typeof detail.url === 'string') urls.push(detail.url);
+    if (Array.isArray(detail.args)) {
+      detail.args.forEach(value => {
+        if (typeof value === 'string') urls.push(value);
+      });
+    }
+    if (typeof detail.href === 'string') urls.push(detail.href);
+    return urls;
+  }
+
+  function markTopNavigation(timestamp) {
+    state.retention = {
+      detectedAt: timestamp,
+      windowStart: timestamp - RETAIN_PRE_MS,
+      windowEnd: timestamp + RETAIN_POST_MS,
+    };
+    state.loggingDisabled = false;
+    saveRetentionState();
+    applyRetentionPolicy();
+    persistLogs();
+  }
+
+  function maybeHandleTopNavigation(event, detail, timestamp) {
+    if (!event) return;
+    const candidates = extractCandidateUrls(detail);
+    if (candidates.some(isTopPageUrl)) {
+      markTopNavigation(timestamp);
     }
   }
 
@@ -84,19 +217,25 @@
   }
 
   function addLog(event, detail = {}) {
+    const now = Date.now();
     const entry = {
-      at: new Date().toISOString(),
+      at: new Date(now).toISOString(),
+      ts: now,
       href: win.location?.href || '',
       visibility: document.visibilityState,
       readyState: document.readyState,
       event,
       detail,
     };
-    state.logs.push(entry);
-    if (state.logs.length > MAX_LOGS * 2) {
-      state.logs = state.logs.slice(-MAX_LOGS);
+    maybeHandleTopNavigation(event, detail, now);
+    if (!state.loggingDisabled && shouldStoreEntry(entry)) {
+      state.logs.push(entry);
+      if (state.logs.length > MAX_LOGS * 2) {
+        state.logs = state.logs.slice(-MAX_LOGS);
+      }
+      applyRetentionPolicy();
+      persistLogs();
     }
-    persistLogs();
     console.info(LOG_PREFIX, event, detail);
     return entry;
   }
@@ -108,6 +247,9 @@
     },
     clear() {
       state.logs = [];
+      state.retention = null;
+      state.loggingDisabled = false;
+      saveRetentionState();
       persistLogs();
       console.info(LOG_PREFIX, 'Cleared logs');
     },
@@ -151,6 +293,14 @@
     GM_registerMenuCommand('NR Debug: Dump logs', () => logger.dumpToConsole());
     GM_registerMenuCommand('NR Debug: Copy logs', () => logger.copyToClipboard());
     GM_registerMenuCommand('NR Debug: Clear logs', () => logger.clear());
+  }
+
+  applyRetentionPolicy();
+
+  if (!state.retention && isTopPageUrl(win.location?.href || '')) {
+    markTopNavigation(Date.now());
+  } else {
+    persistLogs();
   }
 
   addLog('logger:init', {
@@ -220,8 +370,18 @@
 
   // Hook navigation-related APIs
   hookFunction(win.location, 'reload', 'location.reload');
-  hookFunction(win.location, 'replace', 'location.replace');
-  hookFunction(win.location, 'assign', 'location.assign');
+  hookFunction(win.location, 'replace', 'location.replace', {
+    detailBuilder(args) {
+      const url = args && args.length > 0 ? args[0] : undefined;
+      return { url: typeof url === 'string' ? url : undefined };
+    },
+  });
+  hookFunction(win.location, 'assign', 'location.assign', {
+    detailBuilder(args) {
+      const url = args && args.length > 0 ? args[0] : undefined;
+      return { url: typeof url === 'string' ? url : undefined };
+    },
+  });
   hookFunction(win.history, 'pushState', 'history.pushState', {
     detailBuilder(args) {
       return { url: safeSerialize(args[2]), state: safeSerialize(args[0]) };
