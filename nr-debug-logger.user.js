@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 NR Debug Logger
 // @namespace    https://github.com/
-// @version      0.1.0
+// @version      0.2.0
 // @description  Collects detailed runtime logs to help diagnose unexpected reloads and navigation in Expo2025 NR scripts.
 // @match        https://reserve.expo2025.or.jp/*
 // @match        https://reserve-visitor.expo2025.or.jp/*
@@ -23,6 +23,9 @@
   const RETAIN_POST_MS = 10 * 1000;
   const LOG_PREFIX = '[NRDBG]';
   const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  const UI_CONTAINER_ID = 'nrdbg-panel';
+  const UI_TOGGLE_ID = 'nrdbg-toggle';
+  const UI_UPDATE_DEBOUNCE = 250;
 
   const RETENTION_KEY = '__nr_debug_retention_v1__';
   const TOP_PAGE_PATTERNS = [
@@ -35,6 +38,13 @@
     logs: loadStoredLogs(),
     retention: loadRetentionState(),
     loggingDisabled: false,
+  };
+
+  const uiState = {
+    initialized: false,
+    container: null,
+    toggle: null,
+    pendingUpdate: null,
   };
 
   function loadStoredLogs() {
@@ -242,7 +252,22 @@
       persistLogs();
     }
     console.info(LOG_PREFIX, event, detail);
+    scheduleUIRefresh();
     return entry;
+  }
+
+  function getLogsAsText(logs = state.logs) {
+    return logs.map((entry, idx) => {
+      return [
+        `#${idx + 1}`,
+        `time=${entry.at}`,
+        `event=${entry.event}`,
+        `href=${entry.href}`,
+        `visibility=${entry.visibility}`,
+        `readyState=${entry.readyState}`,
+        `detail=${JSON.stringify(entry.detail)}`,
+      ].join(' ');
+    }).join('\n');
   }
 
   const logger = {
@@ -257,6 +282,7 @@
       saveRetentionState();
       persistLogs();
       console.info(LOG_PREFIX, 'Cleared logs');
+      scheduleUIRefresh();
     },
     dumpToConsole() {
       console.group(`${LOG_PREFIX} Dump (${state.logs.length})`);
@@ -266,17 +292,7 @@
       console.groupEnd();
     },
     copyToClipboard() {
-      const text = state.logs.map((entry, idx) => {
-        return [
-          `#${idx + 1}`,
-          `time=${entry.at}`,
-          `event=${entry.event}`,
-          `href=${entry.href}`,
-          `visibility=${entry.visibility}`,
-          `readyState=${entry.readyState}`,
-          `detail=${JSON.stringify(entry.detail)}`,
-        ].join(' ');
-      }).join('\n');
+      const text = getLogsAsText();
       if (typeof GM_setClipboard === 'function') {
         GM_setClipboard(text, { type: 'text', mimetype: 'text/plain' });
         console.info(LOG_PREFIX, 'Copied logs to clipboard');
@@ -290,11 +306,39 @@
         console.warn(LOG_PREFIX, 'Clipboard API not available');
       }
     },
+    saveToFile(filename) {
+      const text = getLogsAsText();
+      const defaultName = filename || `nr-debug-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      try {
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = defaultName;
+        const host = document.body || document.documentElement;
+        host.appendChild(link);
+        link.click();
+        requestAnimationFrame(() => {
+          host.removeChild(link);
+          URL.revokeObjectURL(url);
+        });
+        console.info(LOG_PREFIX, 'Saved logs to file', defaultName);
+      } catch (err) {
+        console.warn(LOG_PREFIX, 'Failed to save logs', err);
+      }
+    },
+    getText() {
+      return getLogsAsText();
+    },
   };
 
   win.NR_DEBUG_LOGGER = logger;
 
   if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('NR Debug: Open panel', () => {
+      ensureUI();
+      openUIPanel();
+    });
     GM_registerMenuCommand('NR Debug: Dump logs', () => logger.dumpToConsole());
     GM_registerMenuCommand('NR Debug: Copy logs', () => logger.copyToClipboard());
     GM_registerMenuCommand('NR Debug: Clear logs', () => logger.clear());
@@ -557,5 +601,285 @@
       logger.dumpToConsole();
     }
   }, true);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ensureUI, { once: true });
+  } else {
+    ensureUI();
+  }
+
+  function ensureUI() {
+    if (uiState.initialized) {
+      scheduleUIRefresh();
+      return;
+    }
+    uiState.initialized = true;
+
+    injectUIStyles();
+
+    uiState.toggle = document.createElement('button');
+    uiState.toggle.id = UI_TOGGLE_ID;
+    uiState.toggle.type = 'button';
+    uiState.toggle.textContent = 'NR Debug';
+    uiState.toggle.title = 'Open NR Debug Logger panel';
+    uiState.toggle.addEventListener('click', () => {
+      ensureUIContainer();
+      toggleUIPanel();
+    });
+    const toggleHost = document.body || document.documentElement;
+    toggleHost.appendChild(uiState.toggle);
+
+    scheduleUIRefresh();
+  }
+
+  function ensureUIContainer() {
+    if (uiState.container) return;
+    const container = document.createElement('div');
+    container.id = UI_CONTAINER_ID;
+    container.innerHTML = `
+      <div class="nrdbg-panel-header">
+        <span class="nrdbg-panel-title">NR Debug Logger</span>
+        <button type="button" class="nrdbg-close" data-action="close" title="Close">×</button>
+      </div>
+      <div class="nrdbg-panel-body">
+        <div class="nrdbg-summary">
+          <div><span class="nrdbg-label">Stored logs:</span> <span data-field="count">0</span></div>
+          <div><span class="nrdbg-label">Last event:</span> <span data-field="last"></span></div>
+          <div><span class="nrdbg-label">Logging window:</span> <span data-field="window"></span></div>
+          <div><span class="nrdbg-label">Status:</span> <span data-field="status"></span></div>
+        </div>
+        <textarea class="nrdbg-preview" data-field="preview" readonly></textarea>
+        <div class="nrdbg-actions">
+          <button type="button" data-action="refresh">Refresh</button>
+          <button type="button" data-action="copy">Copy</button>
+          <button type="button" data-action="save">Save</button>
+          <button type="button" data-action="clear">Clear</button>
+        </div>
+      </div>
+    `;
+
+    container.addEventListener('click', event => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+      const action = button.getAttribute('data-action');
+      if (action === 'close') {
+        closeUIPanel();
+      } else if (action === 'refresh') {
+        updateUIPanel();
+      } else if (action === 'copy') {
+        logger.copyToClipboard();
+      } else if (action === 'save') {
+        logger.saveToFile();
+      } else if (action === 'clear') {
+        logger.clear();
+      }
+    });
+
+    const host = document.body || document.documentElement;
+    host.appendChild(container);
+    uiState.container = container;
+    updateUIPanel();
+  }
+
+  function injectUIStyles() {
+    if (document.getElementById('nrdbg-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'nrdbg-styles';
+    style.textContent = `
+      #${UI_TOGGLE_ID} {
+        position: fixed;
+        bottom: 1rem;
+        right: 1rem;
+        z-index: 2147483646;
+        background: rgba(34, 34, 34, 0.85);
+        color: #fff;
+        border: none;
+        border-radius: 999px;
+        padding: 0.5rem 1rem;
+        font-size: 12px;
+        font-family: system-ui, sans-serif;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+      #${UI_TOGGLE_ID}:hover {
+        background: rgba(20, 20, 20, 0.95);
+      }
+      #${UI_TOGGLE_ID}.nrdbg-active {
+        background: rgba(0, 132, 255, 0.85);
+      }
+      #${UI_CONTAINER_ID} {
+        position: fixed;
+        bottom: 4rem;
+        right: 1rem;
+        width: min(420px, calc(100vw - 2rem));
+        max-height: min(70vh, 500px);
+        display: none;
+        flex-direction: column;
+        background: rgba(15, 15, 15, 0.95);
+        color: #f3f3f3;
+        border-radius: 12px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        font-family: system-ui, sans-serif;
+        z-index: 2147483647;
+        overflow: hidden;
+        backdrop-filter: blur(6px);
+      }
+      #${UI_CONTAINER_ID}.nrdbg-open {
+        display: flex;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.5rem 0.75rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      #${UI_CONTAINER_ID} .nrdbg-panel-title {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-close {
+        background: transparent;
+        color: inherit;
+        border: none;
+        font-size: 18px;
+        cursor: pointer;
+        padding: 0.25rem 0.5rem;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-panel-body {
+        padding: 0.75rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-summary {
+        font-size: 12px;
+        display: grid;
+        gap: 0.25rem;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-label {
+        opacity: 0.7;
+        margin-right: 0.25rem;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-preview {
+        width: 100%;
+        min-height: 160px;
+        resize: vertical;
+        background: rgba(0, 0, 0, 0.45);
+        color: inherit;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 0.5rem;
+        font-family: ui-monospace, SFMono-Regular, SFMono, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-actions button {
+        flex: 1;
+        min-width: 80px;
+        background: rgba(255, 255, 255, 0.12);
+        color: inherit;
+        border: none;
+        border-radius: 6px;
+        padding: 0.45rem 0.5rem;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      #${UI_CONTAINER_ID} .nrdbg-actions button:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+      @media (max-width: 480px) {
+        #${UI_TOGGLE_ID} {
+          bottom: 0.75rem;
+          right: 0.75rem;
+        }
+        #${UI_CONTAINER_ID} {
+          right: 0.5rem;
+          left: 0.5rem;
+          width: auto;
+        }
+      }
+    `;
+    const styleHost = document.head || document.documentElement;
+    styleHost.appendChild(style);
+  }
+
+  function updateUIPanel() {
+    if (!uiState.container) return;
+    const countField = uiState.container.querySelector('[data-field="count"]');
+    const lastField = uiState.container.querySelector('[data-field="last"]');
+    const windowField = uiState.container.querySelector('[data-field="window"]');
+    const statusField = uiState.container.querySelector('[data-field="status"]');
+    const previewField = uiState.container.querySelector('[data-field="preview"]');
+
+    const logs = state.logs.slice();
+    countField.textContent = String(logs.length);
+
+    if (logs.length > 0) {
+      const last = logs[logs.length - 1];
+      lastField.textContent = `${last.at} (${last.event})`;
+    } else {
+      lastField.textContent = 'No logs captured yet';
+    }
+
+    if (state.retention) {
+      const start = new Date(state.retention.windowStart).toISOString();
+      const end = new Date(state.retention.windowEnd).toISOString();
+      windowField.textContent = `${start} → ${end}`;
+    } else {
+      windowField.textContent = `Rolling ${Math.round(RETAIN_PRE_MS / 1000)}s window before top-level navigation`;
+    }
+
+    statusField.textContent = state.loggingDisabled
+      ? 'Logging paused (window elapsed)'
+      : 'Logging active';
+
+    const previewLogs = logs.slice(-50);
+    previewField.value = getLogsAsText(previewLogs);
+  }
+
+  function toggleUIPanel() {
+    if (!uiState.container) {
+      ensureUIContainer();
+    }
+    if (!uiState.container) return;
+    const isOpen = uiState.container.classList.toggle('nrdbg-open');
+    uiState.toggle?.classList.toggle('nrdbg-active', isOpen);
+    if (isOpen) {
+      updateUIPanel();
+    }
+  }
+
+  function openUIPanel() {
+    ensureUIContainer();
+    if (!uiState.container) return;
+    uiState.container.classList.add('nrdbg-open');
+    uiState.toggle?.classList.add('nrdbg-active');
+    updateUIPanel();
+  }
+
+  function closeUIPanel() {
+    if (!uiState.container) return;
+    uiState.container.classList.remove('nrdbg-open');
+    uiState.toggle?.classList.remove('nrdbg-active');
+  }
+
+  function scheduleUIRefresh() {
+    if (!uiState.initialized) return;
+    if (uiState.pendingUpdate) {
+      clearTimeout(uiState.pendingUpdate);
+    }
+    uiState.pendingUpdate = setTimeout(() => {
+      uiState.pendingUpdate = null;
+      updateUIPanel();
+    }, UI_UPDATE_DEBOUNCE);
+  }
 
 })();
