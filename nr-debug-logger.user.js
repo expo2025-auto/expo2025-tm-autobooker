@@ -5,9 +5,13 @@
 // @description  Collects detailed runtime logs to help diagnose unexpected reloads and navigation in Expo2025 NR scripts.
 // @match        https://reserve.expo2025.or.jp/*
 // @match        https://reserve-visitor.expo2025.or.jp/*
+// @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-start
 // @grant        GM_registerMenuCommand
 // @grant        GM_setClipboard
+// @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/nr-debug-logger.user.js
+// @downloadURL  https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/nr-debug-logger.user.js
+// @supportURL   https://github.com/expo2025-auto/expo2025-tm-autobooker/issues
 // ==/UserScript==
 
 (function() {
@@ -24,6 +28,7 @@
   const TOP_PAGE_PATTERNS = [
     /^https:\/\/reserve\.expo2025\.or\.jp\/?(?:[?#]|$)/i,
     /^https:\/\/reserve-visitor\.expo2025\.or\.jp\/?(?:[?#]|$)/i,
+    /^https:\/\/ticket\.expo2025\.or\.jp\/?(?:[?#]|$)/i,
   ];
 
   const state = {
