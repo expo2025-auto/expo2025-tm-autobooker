@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         β　Expo2025 予約変更（iOS Safari安定化版）
 // @namespace    http://tampermonkey.net/
-// @version      0.7.1-ios-safari-fix-2025-10-06
+// @version      0.7.1-ios-safari-fix
 // @description  iPad/iOS Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約の現行仕様は維持。
-// @downloadURL  https://raw.githubusercontent.com/<your-account>/<your-repo>/main/reservation-chenge-earlier-ios-safarifix.user.js
-// @updateURL    https://raw.githubusercontent.com/<your-account>/<your-repo>/main/reservation-chenge-earlier-ios-safarifix.user.js
+// @downloadURL  https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/reservation-chenge-earlier-ios-safarifix.user.js
+// @updateURL    https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/reservation-chenge-earlier-ios-safarifix.user.js
 // @author       you
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
