@@ -1045,18 +1045,34 @@ async function syncServer(){try{const res=await fetch(location.origin+'/',{metho
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
 function delayUntilNextMinute_12s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(12,0);if(n.getSeconds()>12||(n.getSeconds()===12&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function msUntilWindowEnd(){const now=serverNow();const end=new Date(now.getTime());end.setSeconds(25,0);if(end.getTime()<=now.getTime())return 0;return end.getTime()-now.getTime()}
+function scheduleRetryWithinWindow(opts){
+  if(!state.r) return false;
+  const now=serverNow();
+  const sec=now.getSeconds()+now.getMilliseconds()/1000;
+  if(sec<12||sec>=25) return false;
+  const remaining=msUntilWindowEnd();
+  const SAFETY_MARGIN_MS=RELOAD_DELAY_OFFSET_MS+400;
+  const MIN_DELAY_MS=450;
+  const available=remaining-SAFETY_MARGIN_MS;
+  if(available<=MIN_DELAY_MS) return false;
+  const maxDelay=Math.min(available-120,2200);
+  if(maxDelay<MIN_DELAY_MS) return false;
+  let delay=Math.min(maxDelay,Math.max(MIN_DELAY_MS,available-400));
+  delay=Math.min(maxDelay,delay+Math.random()*250);
+  if(delay<MIN_DELAY_MS) return false;
+  scheduleReloadAfterRender(delay,opts);
+  return true;
+}
 function scheduleRetryOrNextMinute(){
-  const sec=secondsInMinute();
-  if (sec < 25 && !isSafariBrowser()) {
-    if(state.r){
-      ui.setStatus('再試行中');
-      reloadAfterRender({requireActive:true,resetFailCount:false});
-    }
-  }else{
-    const d=delayUntilNextMinute_12s();
-    ui.setStatus('待機中');
-    scheduleReloadAfterRender(d,{requireActive:true,resetFailCount:true});
+  if(state.r&&scheduleRetryWithinWindow({requireActive:true,resetFailCount:false})){
+    ui.setStatus('再試行中');
+    return 'retry';
   }
+  const d=delayUntilNextMinute_12s();
+  ui.setStatus('待機中');
+  scheduleReloadAfterRender(d,{requireActive:true,resetFailCount:true});
+  return 'nextMinute';
 }
 
 /* ========= UI ========= */
@@ -1237,9 +1253,7 @@ async function runCycle(){
     if(r==='ng'){ui.setStatus('再試行中');break}
   }
 
-  const d=delayUntilNextMinute_12s();
-  ui.setStatus('待機中');
-  scheduleReloadAfterRender(d,{requireActive:true,resetFailCount:true});
+  scheduleRetryOrNextMinute();
 }
 
 if(state.r&&!state.keepAlive)runCycle();
