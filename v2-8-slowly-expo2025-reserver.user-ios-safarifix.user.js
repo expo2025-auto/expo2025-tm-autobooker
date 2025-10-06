@@ -4,11 +4,56 @@
 // @description  iPad Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約は維持。
 // @namespace    http://tampermonkey.net/
 // @match        https://ticket.expo2025.or.jp/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        none
 // @downloadURL  https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js
 // @updateURL    https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js
 // ==/UserScript==
+// ===== reload直後の "/" 遷移をブロックする仕組み（ページ間持ち越し対応）=====
+
+// 起動時：前ページでセットした締切を復元（最速で実行）
+(function bootstrapTopGuard(){
+  try {
+    const ts = sessionStorage.getItem('__nr_blockTopUntil_ts');
+    window.__nr_blockTopUntil = ts ? +ts : 0;
+  } catch (_) {
+    window.__nr_blockTopUntil = 0;
+  }
+})();
+
+// pushState/replaceState をフック（最速で実行）
+(function patchHistoryGuard(){
+  const H = history;
+  const origPush = H.pushState.bind(H);
+  const origReplace = H.replaceState.bind(H);
+  const isTop = (u) => {
+    const s = String(u || '');
+    return s === '/' || s === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(s);
+  };
+
+  H.pushState = function(state, title, url){
+    if (window.__nr_blockTopUntil > Date.now() && isTop(url)) {
+      console.warn('[NR] blocked pushState("/") during reload window');
+      return;
+    }
+    return origPush(state, title, url);
+  };
+
+  H.replaceState = function(state, title, url){
+    if (window.__nr_blockTopUntil > Date.now() && isTop(url)) {
+      console.warn('[NR] blocked replaceState("/") during reload window');
+      return;
+    }
+    return origReplace(state, title, url);
+  };
+})();
+
+// ガード起動関数：締切を sessionStorage にも書く（ページ間持ち越し）
+function armTopGuard(ms = 10000){
+  const until = Date.now() + ms;
+  window.__nr_blockTopUntil = until;
+  try { sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); } catch (_){}
+}
 
 const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
 
