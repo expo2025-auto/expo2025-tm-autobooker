@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         V.2.8（ゆっくり）ios Expo2025 来場予約（Safari安定化版）
-// @version      2.8.3-slow-safari-fix
+// @version      2.8.3.1-slow-safari-fix
 // @description  iPad Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約は維持。
 // @namespace    http://tampermonkey.net/
 // @match        https://ticket.expo2025.or.jp/*
@@ -270,6 +270,7 @@ let __nr_blockTopUntil = 0;
 
 (function patchHistoryGuard(){
   const origPush = history.pushState.bind(history);
+  const origReplace = history.replaceState.bind(history);
   history.pushState = function(state, title, url){
     const u = String(url || '');
     // リロード直後の短い間だけ "/" への pushState を防ぐ
@@ -279,6 +280,15 @@ let __nr_blockTopUntil = 0;
       return;
     }
     return origPush(state, title, url);
+  };
+  history.replaceState = function(state, title, url){
+    const u = String(url || '');
+    if (Date.now() < __nr_blockTopUntil &&
+        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
+      console.warn('[NR] blocked replaceState("/") during reload window');
+      return;
+    }
+    return origReplace(state, title, url);
   };
 })();
 
