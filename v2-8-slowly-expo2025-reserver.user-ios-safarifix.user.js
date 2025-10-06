@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         V.2.8（ゆっくり）ios Expo2025 来場予約（Safari安定化版）
-// @version      2.8.4-slow-safari-fix
+// @version      2.8.3-slow-safari-fix
 // @description  iPad Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約は維持。
 // @namespace    http://tampermonkey.net/
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
 // @grant        none
-// @downloadURL  https://raw.githubusercontent.com/<your-account>/<your-repo>/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js
-// @updateURL    https://raw.githubusercontent.com/<your-account>/<your-repo>/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js// ==/UserScript==
+// @downloadURL  https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js
+// @updateURL    https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/v2-8-slowly-expo2025-reserver.user-ios-safarifix.user.js
+// ==/UserScript==
 
 const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
 
