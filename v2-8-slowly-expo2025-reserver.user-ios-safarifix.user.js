@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         V.2.8（ゆっくり）ios Expo2025 来場予約（Safari安定化版）
-// @version      2.8.3.1-slow-safari-fix
+// @version      2.8.3.2-slow-safari-fix
 // @description  iPad Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約は維持。
 // @namespace    http://tampermonkey.net/
 // @match        https://ticket.expo2025.or.jp/*
