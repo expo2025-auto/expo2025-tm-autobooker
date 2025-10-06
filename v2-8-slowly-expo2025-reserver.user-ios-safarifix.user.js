@@ -59,6 +59,7 @@ function safeReload(){
       // Safari: reloadを使わず安定遷移
       const url = new URL(current);
       url.searchParams.set('r', Date.now().toString());
+      armTopGuard(1600); 
       location.replace(url.toString());
     }else{
       // 既存ブラウザは従来通り
@@ -264,6 +265,26 @@ function saveState(){Sset(STATE_KEY,state)}
     }
   }catch{}
 })();
+// --- Topページ pushState("/") 防止ガード ---
+let __nr_blockTopUntil = 0;
+
+(function patchHistoryGuard(){
+  const origPush = history.pushState.bind(history);
+  history.pushState = function(state, title, url){
+    const u = String(url || '');
+    // リロード直後の短い間だけ "/" への pushState を防ぐ
+    if (Date.now() < __nr_blockTopUntil &&
+        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
+      console.warn('[NR] blocked pushState("/") during reload window');
+      return;
+    }
+    return origPush(state, title, url);
+  };
+})();
+
+function armTopGuard(ms = 1600){
+  __nr_blockTopUntil = Date.now() + ms;
+}
 
 let ui=null;
 let AutoToggleEl=null,KeepAliveToggleEl=null,SwitchCheckEl=null,SwitchTimeInputEl=null;
