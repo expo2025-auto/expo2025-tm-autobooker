@@ -21,6 +21,41 @@ function isSafariBrowser(){
   return ua.includes('Safari') && !ua.includes('Chrome') && !ua.includes('Firefox');
 }
 
+
+// --- Topページ pushState/replaceState 防止ガード ---
+let __nr_blockTopUntil = 0;
+
+(function patchHistoryGuard(){
+  const origPush = history.pushState.bind(history);
+  const origReplace = history.replaceState.bind(history);
+
+  history.pushState = function(state, title, url){
+    const u = String(url || '');
+    if (Date.now() < __nr_blockTopUntil &&
+        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
+      console.warn('[NR] blocked pushState("/") during reload window');
+      return;
+    }
+    return origPush(state, title, url);
+  };
+
+  history.replaceState = function(state, title, url){
+    const u = String(url || '');
+    if (Date.now() < __nr_blockTopUntil &&
+        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
+      console.warn('[NR] blocked replaceState("/") during reload window');
+      return;
+    }
+    return origReplace(state, title, url);
+  };
+})();
+
+function armTopGuard(ms = 10000){
+  __nr_blockTopUntil = Date.now() + ms;
+}
+
+
+
   /***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
     timeButton: 'td button, td [role="button"], [data-time-slot] button, [data-time-slot] [role="button"], div[role="button"][class*="style_main__button__"], button[class*="style_main__button__"], div[role="button"][aria-pressed]',
@@ -1316,18 +1351,18 @@ function isSafariBrowser(){
 
   const current = location.href;
   if (isSafariBrowser()) {
-    // Safari: reload()を使わず、履歴を固定 → キャッシュバスター付きでassign
-    try {
-      const url = new URL(current);
-      url.searchParams.set('r', Date.now().toString());
-      try { history.replaceState({}, '', current); } catch (_) {}
-      location.assign(url.toString());
-    } catch (e) {
-      // フォールバック
-      const glue = current.includes('?') ? '&' : '?';
-      location.href = current + glue + 'r=' + Date.now();
-    }
-  } else {
+  try {
+    const currentUrl = location.href;
+    const url = new URL(currentUrl);
+    url.searchParams.set('r', Date.now().toString());
+    try { armTopGuard(10000); } catch (_) {}
+    location.replace(url.toString());
+  } catch (e) {
+    const glue = location.href.includes('?') ? '&' : '?';
+    location.href = location.href + glue + 'r=' + Date.now();
+  }
+} else {
+
     // 非Safariは従来通り
     location.reload();
   }
