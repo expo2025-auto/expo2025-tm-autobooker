@@ -310,36 +310,7 @@ function saveState(){Sset(STATE_KEY,state)}
     }
   }catch{}
 })();
-// --- Topページ pushState("/") 防止ガード ---
-let __nr_blockTopUntil = 0;
 
-(function patchHistoryGuard(){
-  const origPush = history.pushState.bind(history);
-  const origReplace = history.replaceState.bind(history);
-  history.pushState = function(state, title, url){
-    const u = String(url || '');
-    // リロード直後の短い間だけ "/" への pushState を防ぐ
-    if (Date.now() < __nr_blockTopUntil &&
-        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
-      console.warn('[NR] blocked pushState("/") during reload window');
-      return;
-    }
-    return origPush(state, title, url);
-  };
-  history.replaceState = function(state, title, url){
-    const u = String(url || '');
-    if (Date.now() < __nr_blockTopUntil &&
-        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
-      console.warn('[NR] blocked replaceState("/") during reload window');
-      return;
-    }
-    return origReplace(state, title, url);
-  };
-})();
-
-function armTopGuard(ms = 1600){
-  __nr_blockTopUntil = Date.now() + ms;
-}
 
 let ui=null;
 let AutoToggleEl=null,KeepAliveToggleEl=null,SwitchCheckEl=null,SwitchTimeInputEl=null;
