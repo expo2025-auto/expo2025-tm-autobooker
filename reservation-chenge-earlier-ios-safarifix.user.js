@@ -9,7 +9,8 @@
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
-// @connect      ticket.expo2025.or.jp// ==/UserScript==
+// @connect      ticket.expo2025.or.jp
+// ==/UserScript==
 
 
 // ===== Inject page-context guard at document-start (persist across pages) =====
