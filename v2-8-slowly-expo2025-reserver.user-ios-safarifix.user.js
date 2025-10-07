@@ -114,7 +114,7 @@ function safeReload(){
       // Safari: reloadを使わず安定遷移
       const url = new URL(current);
       url.searchParams.set('r', Date.now().toString());
-      armTopGuard(10000); 
+      armTopGuard(100000); 
       location.replace(url.toString());
     }else{
       // 既存ブラウザは従来通り
