@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         V.2.8（ゆっくり）ios Expo2025 来場予約（Safari安定化版）
-// @version      2.8.3.2-slow-safari-fix
+// @version      2.8.3.3-slow-safari-fix
 // @description  iPad Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約は維持。
 // @namespace    http://tampermonkey.net/
 // @match        https://ticket.expo2025.or.jp/*
@@ -22,47 +22,107 @@
 })();
 
 // pushState/replaceState をフック（最速で実行）
+
+// pushState/replaceState をフック（最速で実行・上書き耐性つき）
 (function patchHistoryGuard(){
   const H = history;
-  const origPush = H.pushState.bind(H);
-  const origReplace = H.replaceState.bind(H);
-  var isTop = function(u){
-  try{
-    // 絶対/相対いずれでも URL として解釈 → pathname が '/' ならトップ扱い
-    var p = new URL(String(u || ''), location.href).pathname;
-    return p === '/';
-  }catch(_){
-    // URL化できない文字列向けの後方互換フォールバック
-    var s = String(u || '');
-    if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
-    // originだけ / origin + ? / origin + # / origin + /? / origin + /# を許容
-    return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+  const origPushNative = H.pushState.bind(H);
+  const origReplaceNative = H.replaceState.bind(H);
+
+  function isTop(u){
+    try{
+      const p = new URL(String(u || ''), location.href).pathname;
+      return p === '/';
+    }catch(_){
+      const s = String(u || '');
+      if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
+      return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+    }
   }
-};
 
+  function makeGuardedPush(orig){
+    const fn = function(state, title, url){
+      if (window.__nr_blockTopUntil > Date.now() && isTop(url)){
+        try{ console.warn('[NR] blocked pushState(\"/\") during reload window'); }catch(_){}
+        return;
+      }
+      return orig.apply(this, arguments);
+    };
+    Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false });
+    return fn;
+  }
 
-  H.pushState = function(state, title, url){
-    if (window.__nr_blockTopUntil > Date.now() && isTop(url)) {
-      console.warn('[NR] blocked pushState("/") during reload window');
-      return;
+  function makeGuardedReplace(orig){
+    const fn = function(state, title, url){
+      if (window.__nr_blockTopUntil > Date.now() && isTop(url)){
+        try{ console.warn('[NR] blocked replaceState(\"/\") during reload window'); }catch(_){}
+        return;
+      }
+      return orig.apply(this, arguments);
+    };
+    Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false });
+    return fn;
+  }
+
+  function lockProp(obj, key, value){
+    try{
+      Object.defineProperty(obj, key, { value, writable:false, configurable:false });
+    }catch(_){
+      try{ obj[key] = value; }catch(__){}
     }
-    return origPush(state, title, url);
-  };
+  }
 
-  H.replaceState = function(state, title, url){
-    if (window.__nr_blockTopUntil > Date.now() && isTop(url)) {
-      console.warn('[NR] blocked replaceState("/") during reload window');
-      return;
+  function applyGuard(lock){
+    // 現在の関数（他スクリプトがラップしている可能性もある）を起点に再ラップ
+    const currentPush = H.pushState.bind(H);
+    const currentReplace = H.replaceState.bind(H);
+    const guardedPush = makeGuardedPush(currentPush);
+    const guardedReplace = makeGuardedReplace(currentReplace);
+    H.pushState = guardedPush;
+    H.replaceState = guardedReplace;
+    if (lock){
+      lockProp(H, 'pushState', guardedPush);
+      lockProp(H, 'replaceState', guardedReplace);
     }
-    return origReplace(state, title, url);
+  }
+
+  // 監視：他スクリプトに上書きされたら即時に再適用
+  let watchTimer = null;
+  function startWatch(durationMs){
+    const stopAt = Date.now() + (durationMs||15000);
+    if (watchTimer) clearInterval(watchTimer);
+    watchTimer = setInterval(()=>{
+      const needReapply = !H.pushState.__nrGuarded || !H.replaceState.__nrGuarded;
+      const guardActive = (window.__nr_blockTopUntil||0) > Date.now();
+      if (needReapply){
+        applyGuard(true);
+        return;
+      }
+      if (!guardActive && Date.now() > stopAt){
+        clearInterval(watchTimer);
+        watchTimer = null;
+      }
+    }, 60);
+  }
+
+  // 初期適用：ロックつきで入れる（他スクリプトより先手）
+  applyGuard(true);
+  // 念のため初期 15 秒は監視して上書きを検知・復旧
+  startWatch(15000);
+
+  // グローバルAPI：ガード起動時に監視を延長（reload 窓いっぱい）
+  window.__nr_reinforceHistoryGuard = function(ms){
+    try{ applyGuard(true); }catch(_){}
+    startWatch(ms||10000);
   };
 })();
-
 // ガード起動関数：締切を sessionStorage にも書く（ページ間持ち越し）
 function armTopGuard(ms = 10000){
   const until = Date.now() + ms;
   window.__nr_blockTopUntil = until;
   try { sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); } catch (_){}
+  try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
+} catch (_){}
 }
 
 const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
