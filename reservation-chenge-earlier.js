@@ -1586,5 +1586,9 @@ function ensureToggle() {
     nextUpdateTimerId = window.setInterval(updateNextUpdateDisplay, 200);
   }
 }
-
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', ensureToggle);
+} else {
+  ensureToggle();
+}
 })();
