@@ -26,10 +26,20 @@
   const H = history;
   const origPush = H.pushState.bind(H);
   const origReplace = H.replaceState.bind(H);
-  const isTop = (u) => {
-    const s = String(u || '');
-    return s === '/' || s === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(s);
-  };
+  var isTop = function(u){
+  try{
+    // 絶対/相対いずれでも URL として解釈 → pathname が '/' ならトップ扱い
+    var p = new URL(String(u || ''), location.href).pathname;
+    return p === '/';
+  }catch(_){
+    // URL化できない文字列向けの後方互換フォールバック
+    var s = String(u || '');
+    if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
+    // originだけ / origin + ? / origin + # / origin + /? / origin + /# を許容
+    return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+  }
+};
+
 
   H.pushState = function(state, title, url){
     if (window.__nr_blockTopUntil > Date.now() && isTop(url)) {
