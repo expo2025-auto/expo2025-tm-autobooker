@@ -27,17 +27,17 @@
   const origPush = H.pushState.bind(H);
   const origReplace = H.replaceState.bind(H);
   var isTop = function(u){
-    try{
-      // URLとして解釈して pathname を見る。クエリやハッシュが付いていても '/' ならトップ扱い
-      var p = new URL(String(u || ''), location.href).pathname;
-      return p === '/';
-    }catch(_){
-      // URL化できないケースの後方互換フォールバック
-      var s = String(u || '');
-      if (s === '/' || s === location.origin  '/') return true;
-      // '?', '#', 末尾のスラッシュ有無もトップ扱い
-      return /^https?:\/\/ticket\.expo2025\.or\.jp\/(?:[?#].*)?$/.test(s);
-    }
+  try{
+    // 絶対/相対いずれでも URL として解釈 → pathname が '/' ならトップ扱い
+    var p = new URL(String(u || ''), location.href).pathname;
+    return p === '/';
+  }catch(_){
+    // URL化できない文字列向けの後方互換フォールバック
+    var s = String(u || '');
+    if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
+    // originだけ / origin + ? / origin + # / origin + /? / origin + /# を許容
+    return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+  }
   };
 
   H.pushState = function(state, title, url){
