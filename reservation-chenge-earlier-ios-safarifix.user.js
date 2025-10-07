@@ -38,7 +38,7 @@ function isSafariBrowser(){
 
 
 // --- Topページ pushState/replaceState 防止ガード（content側はアーマー呼び出しのみ） ---
-function armTopGuard(ms = 10000){
+function armTopGuard(ms = 100000){
   try{
     if (typeof window.__nr_armTopGuard === 'function'){
       window.__nr_armTopGuard(ms);
