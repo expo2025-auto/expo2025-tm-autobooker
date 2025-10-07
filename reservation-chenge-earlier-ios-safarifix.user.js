@@ -1479,4 +1479,4 @@ catch(_){}
     location.reload();
   }
 }
-)();
+})();
