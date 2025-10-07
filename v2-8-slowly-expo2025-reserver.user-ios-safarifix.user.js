@@ -122,8 +122,8 @@ function armTopGuard(ms = 10000){
   window.__nr_blockTopUntil = until;
   try { sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); } catch (_){}
   try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
-} catch (_){}
 }
+
 
 const SCRIPT_VERSION=(typeof GM_info!=='undefined'&&GM_info?.script?.version)||'dev';
 
