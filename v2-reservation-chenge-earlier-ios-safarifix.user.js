@@ -7,7 +7,7 @@
 // @updateURL    https://github.com/expo2025-auto/expo2025-tm-autobooker/raw/refs/heads/main/v2-reservation-chenge-earlier.js
 // @author       you
 // @match        https://ticket.expo2025.or.jp/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @connect      ticket.expo2025.or.jp
 // ==/UserScript==
