@@ -28,6 +28,7 @@
     try{
       var p = new URL(String(u || ''), location.href).pathname;
       return p === '/';
+    }catch(_){
       var s = String(u || '');
       if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
       return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
@@ -113,6 +114,7 @@
 
 
 
+
 (function () {
   'use strict';
 
@@ -127,12 +129,22 @@ function isSafariBrowser(){
 
 // --- Topページ pushState/replaceState 防止ガード（content側はアーマー呼び出しのみ） ---
 function armTopGuard(ms = 100000){
-try{
+  try{
     if (typeof window.__nr_armTopGuard === 'function'){
       window.__nr_armTopGuard(ms);
+      try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
       return;
-    
+    }
+  }catch(_){}
+  // フォールバック：最低限の持ち越し
+  try{
+    var until = Date.now() + ms;
+    window.__nr_blockTopUntil = until;
+    sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
+  }catch(_){}
   try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
+}
+catch(_){}
 }
   }catch(_){}
   // フォールバック：最低限の持ち越し
