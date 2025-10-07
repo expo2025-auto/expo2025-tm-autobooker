@@ -221,6 +221,27 @@ catch(_){}
   ];
   const PREFERRED_SLOT_MINUTES = [9 * 60, 10 * 60, 11 * 60, 12 * 60];
   let enabledFallback = false;
+// --- enable/disable flag (fallback) ---
+// Tampermonkey のパネルON/OFFがまだ外部から届かない場合のフォールバック。
+// 既定は ON（=探索・リロード動作を許可）。
+const __NR_ENABLE_KEY = '__nr_enabled_v1';
+
+function isEnabled(){
+  try{
+    const v = localStorage.getItem(__NR_ENABLE_KEY);
+    if (v === null) return true;   // 既定は ON
+    return v === '1';
+  }catch(_){
+    return true;
+  }
+}
+
+// （今後パネルから切り替える用に用意。現状未使用でもOK）
+function setEnabled(flag){
+  try{
+    localStorage.setItem(__NR_ENABLE_KEY, flag ? '1' : '0');
+  }catch(_){}
+}
 
   const STATUS_LABELS = {
     idle: '待機中',
