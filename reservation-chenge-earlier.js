@@ -1383,232 +1383,208 @@
     }
   }
 
-  /***** UI：トグル＆ステータス表示 *****/
-  function isEnabled() {
-    try {
-      const v = sessionStorage.getItem(ENABLE_KEY);
-      if (v === null) return enabledFallback;
-      enabledFallback = v === '1';
-      return enabledFallback;
-    } catch {
-      return enabledFallback;
-    }
+ /***** UI：トグル＆ステータス表示 *****/
+function isEnabled() {
+  try {
+    const v = sessionStorage.getItem(ENABLE_KEY);
+    if (v === null) return enabledFallback;
+    enabledFallback = v === '1';
+    return enabledFallback;
+  } catch {
+    return enabledFallback;
   }
-  function setEnabled(flag) {
-    enabledFallback = flag;
-    try {
-      sessionStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
-    } catch {
-      // storage unavailable
-    }
-    updateNextUpdateDisplay();
+}
+function setEnabled(flag) {
+  enabledFallback = flag;
+  try {
+    sessionStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
+  } catch {
+    // storage unavailable
   }
+  updateNextUpdateDisplay();
+}
 
-  function ensureToggle() {
-    const existingWrap = $('#expo-adv-toggle');
-    if (existingWrap) {
-      statusIndicator = existingWrap.querySelector('#expo-adv-status-value');
-      if (statusIndicator) {
-        setStatus(currentStatus);
-      }
-      currentSlotIndicator = existingWrap.querySelector('#expo-adv-current-slot-value');
-      if (currentSlotIndicator) {
-        currentSlotIndicator.textContent = currentSlotDisplay.text;
-        if (currentSlotDisplay.estimated) {
-          currentSlotIndicator.dataset.estimated = '1';
-        } else {
-          delete currentSlotIndicator.dataset.estimated;
-        }
-      }
-      nextUpdateIndicator = existingWrap.querySelector('#expo-adv-next-update-value');
-      if (nextUpdateIndicator) {
-        updateNextUpdateDisplay();
-      }
-      sameDayCheckboxControl = existingWrap.querySelector('#expo-adv-same-day');
-      dateInputControl = existingWrap.querySelector('#expo-adv-date-input');
-      timeCheckboxControls = new Map();
-      for (const option of TARGET_TIME_OPTIONS) {
-        const checkbox = existingWrap.querySelector(`#expo-adv-time-${option.minutes}`);
-        if (checkbox) {
-          timeCheckboxControls.set(option.minutes, checkbox);
-        }
-      }
-      updateDateControlState();
-      updateTimeControlState();
-      return;
+function ensureToggle() {
+  const existingWrap = $('#expo-adv-toggle');
+  if (existingWrap) {
+    statusIndicator = existingWrap.querySelector('#expo-adv-status-value');
+    if (statusIndicator) {
+      setStatus(currentStatus);
     }
-    const wrap = document.createElement('div');
-    wrap.id = 'expo-adv-toggle';
-    Object.assign(wrap.style, {
-      position: 'fixed', top: '10px', left: '10px', zIndex: 999999,
-      display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap',
-      background: '#fff', border: '1px solid #999', borderRadius: '10px',
-      padding: '6px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
-    });
-
-    const btn = document.createElement('button');
-    Object.assign(btn.style, { padding: '4px 8px', cursor: 'pointer' });
-    function updateToggleLabel() {
-      btn.textContent = isEnabled() ? '自動繰り上げ変更：ON' : '自動繰り上げ変更：OFF';
-    }
-    updateToggleLabel();
-    btn.onclick = () => {
-      const next = !isEnabled();
-      setEnabled(next);
-      updateToggleLabel();
-      if (next) {
-        setStatus('idle');
-      } else if (currentStatus !== 'done') {
-        setStatus('idle');
+    currentSlotIndicator = existingWrap.querySelector('#expo-adv-current-slot-value');
+    if (currentSlotIndicator) {
+      currentSlotIndicator.textContent = currentSlotDisplay.text;
+      if (currentSlotDisplay.estimated) {
+        currentSlotIndicator.dataset.estimated = '1';
+      } else {
+        delete currentSlotIndicator.dataset.estimated;
       }
+    }
+    nextUpdateIndicator = existingWrap.querySelector('#expo-adv-next-update-value');
+    if (nextUpdateIndicator) {
       updateNextUpdateDisplay();
-    };
-
-    const statusWrap = document.createElement('span');
-    statusWrap.id = 'expo-adv-status';
-    Object.assign(statusWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
-
-    const statusLabel = document.createElement('span');
-    statusLabel.textContent = '状態:';
-
-    const statusValue = document.createElement('span');
-    statusValue.id = 'expo-adv-status-value';
-    Object.assign(statusValue.style, { fontWeight: 'bold' });
-    statusIndicator = statusValue;
-    setStatus(currentStatus);
-
-    statusWrap.append(statusLabel, statusValue);
-
-    const currentSlotWrap = document.createElement('span');
-    currentSlotWrap.id = 'expo-adv-current-slot';
-    Object.assign(currentSlotWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
-
-    const currentSlotLabel = document.createElement('span');
-    currentSlotLabel.textContent = '現在の予約:';
-
-    const currentSlotValue = document.createElement('span');
-    currentSlotValue.id = 'expo-adv-current-slot-value';
-    Object.assign(currentSlotValue.style, { fontWeight: 'bold' });
-    currentSlotIndicator = currentSlotValue;
-    currentSlotIndicator.textContent = currentSlotDisplay.text;
-    if (currentSlotDisplay.estimated) {
-      currentSlotIndicator.dataset.estimated = '1';
     }
-
-    currentSlotWrap.append(currentSlotLabel, currentSlotValue);
-
-    const nextUpdateWrap = document.createElement('span');
-    nextUpdateWrap.id = 'expo-adv-next-update';
-    Object.assign(nextUpdateWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
-
-    const nextUpdateLabel = document.createElement('span');
-    nextUpdateLabel.textContent = '次の更新:';
-
-    const nextUpdateValue = document.createElement('span');
-    nextUpdateValue.id = 'expo-adv-next-update-value';
-    Object.assign(nextUpdateValue.style, { fontWeight: 'bold' });
-    nextUpdateIndicator = nextUpdateValue;
-    updateNextUpdateDisplay();
-
-    nextUpdateWrap.append(nextUpdateLabel, nextUpdateValue);
-
-    const dateControlWrap = document.createElement('span');
-    dateControlWrap.id = 'expo-adv-date-control';
-    Object.assign(dateControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
-
-    const dateControlLabel = document.createElement('span');
-    dateControlLabel.textContent = '変更希望日:';
-
-    const dateInput = document.createElement('input');
-    dateInput.type = 'date';
-    dateInput.id = 'expo-adv-date-input';
-    Object.assign(dateInput.style, { padding: '2px 4px' });
-
-    const sameDayLabel = document.createElement('label');
-    sameDayLabel.htmlFor = 'expo-adv-same-day';
-    Object.assign(sameDayLabel.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
-
-    const sameDayCheckbox = document.createElement('input');
-    sameDayCheckbox.type = 'checkbox';
-    sameDayCheckbox.id = 'expo-adv-same-day';
-
-    sameDayLabel.append(sameDayCheckbox, document.createTextNode('同じ日'));
-
-    dateControlWrap.append(dateControlLabel, dateInput, sameDayLabel);
-
-    sameDayCheckbox.addEventListener('change', () => {
-      setSameDayPreference(sameDayCheckbox.checked);
-    });
-    dateInput.addEventListener('change', () => {
-      setTargetDatePreference(dateInput.value);
-    });
-
-    sameDayCheckboxControl = sameDayCheckbox;
-    dateInputControl = dateInput;
-    updateDateControlState();
-
-    const timeControlWrap = document.createElement('span');
-    timeControlWrap.id = 'expo-adv-time-control';
-    Object.assign(timeControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
-
-    const timeControlLabel = document.createElement('span');
-    timeControlLabel.textContent = '希望時間:';
-
-    const timeOptionsContainer = document.createElement('span');
-    Object.assign(timeOptionsContainer.style, { display: 'flex', alignItems: 'center', gap: '6px' });
-
+    sameDayCheckboxControl = existingWrap.querySelector('#expo-adv-same-day');
+    dateInputControl = existingWrap.querySelector('#expo-adv-date-input');
     timeCheckboxControls = new Map();
     for (const option of TARGET_TIME_OPTIONS) {
-      const label = document.createElement('label');
-      label.htmlFor = `expo-adv-time-${option.minutes}`;
-      Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.id = `expo-adv-time-${option.minutes}`;
-
-      checkbox.addEventListener('change', () => {
-        setTimePreference(option.minutes, checkbox.checked);
-      });
-
-      label.append(checkbox, document.createTextNode(option.label));
-      timeOptionsContainer.append(label);
-      timeCheckboxControls.set(option.minutes, checkbox);
-    }
-
-    timeControlWrap.append(timeControlLabel, timeOptionsContainer);
-    updateTimeControlState();
-
-    wrap.append(btn, statusWrap, currentSlotWrap, dateControlWrap, timeControlWrap, nextUpdateWrap);
-    document.documentElement.appendChild(wrap);
-
-    if (!nextUpdateTimerId) {
-      nextUpdateTimerId = window.setInterval(updateNextUpdateDisplay, 200);
-    }
-  }
-
-  /***** メインループ *****/
-  function main() {
-    ensureToggle();
-    log('スクリプト起動');
-    getServerDate().then((date) => {
-      if (hasServerTime) {
-        log(`サーバー時刻を基準に同期します（現在 ${date.toLocaleTimeString()}）`);
-      } else {
-        log('サーバー時刻の取得に失敗したため端末時刻を使用します');
+      const checkbox = existingWrap.querySelector(`#expo-adv-time-${option.minutes}`);
+      if (checkbox) {
+        timeCheckboxControls.set(option.minutes, checkbox);
       }
-    });
-    setInterval(async () => {
-      if (!isEnabled()) return;
-      await tick();
-    }, 200);
+    }
+    updateDateControlState();
+    updateTimeControlState();
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.id = 'expo-adv-toggle';
+  Object.assign(wrap.style, {
+    position: 'fixed', top: '10px', left: '10px', zIndex: 999999,
+    display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap',
+    background: '#fff', border: '1px solid #999', borderRadius: '10px',
+    padding: '6px 8px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
+  });
+
+  const btn = document.createElement('button');
+  Object.assign(btn.style, { padding: '4px 8px', cursor: 'pointer' });
+  function updateToggleLabel() {
+    btn.textContent = isEnabled() ? '自動繰り上げ変更：ON' : '自動繰り上げ変更：OFF';
+  }
+  updateToggleLabel();
+  btn.onclick = () => {
+    const next = !isEnabled();
+    setEnabled(next);
+    updateToggleLabel();
+    if (next) {
+      setStatus('idle');
+    } else if (currentStatus !== 'done') {
+      setStatus('idle');
+    }
+    updateNextUpdateDisplay();
+  };
+
+  const statusWrap = document.createElement('span');
+  statusWrap.id = 'expo-adv-status';
+  Object.assign(statusWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+  const statusLabel = document.createElement('span');
+  statusLabel.textContent = '状態:';
+
+  const statusValue = document.createElement('span');
+  statusValue.id = 'expo-adv-status-value';
+  Object.assign(statusValue.style, { fontWeight: 'bold' });
+  statusIndicator = statusValue;
+  setStatus(currentStatus);
+
+  statusWrap.append(statusLabel, statusValue);
+
+  const currentSlotWrap = document.createElement('span');
+  currentSlotWrap.id = 'expo-adv-current-slot';
+  Object.assign(currentSlotWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+  const currentSlotLabel = document.createElement('span');
+  currentSlotLabel.textContent = '現在の予約:';
+
+  const currentSlotValue = document.createElement('span');
+  currentSlotValue.id = 'expo-adv-current-slot-value';
+  Object.assign(currentSlotValue.style, { fontWeight: 'bold' });
+  currentSlotIndicator = currentSlotValue;
+  currentSlotIndicator.textContent = currentSlotDisplay.text;
+  if (currentSlotDisplay.estimated) {
+    currentSlotIndicator.dataset.estimated = '1';
   }
 
-  // ページ準備後に開始
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', main);
-  } else {
-    main();
+  currentSlotWrap.append(currentSlotLabel, currentSlotValue);
+
+  const nextUpdateWrap = document.createElement('span');
+  nextUpdateWrap.id = 'expo-adv-next-update';
+  Object.assign(nextUpdateWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+  const nextUpdateLabel = document.createElement('span');
+  nextUpdateLabel.textContent = '次の更新:';
+
+  const nextUpdateValue = document.createElement('span');
+  nextUpdateValue.id = 'expo-adv-next-update-value';
+  Object.assign(nextUpdateValue.style, { fontWeight: 'bold' });
+  nextUpdateIndicator = nextUpdateValue;
+  updateNextUpdateDisplay();
+
+  nextUpdateWrap.append(nextUpdateLabel, nextUpdateValue);
+
+  const dateControlWrap = document.createElement('span');
+  dateControlWrap.id = 'expo-adv-date-control';
+  Object.assign(dateControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+  const dateControlLabel = document.createElement('span');
+  dateControlLabel.textContent = '変更希望日:';
+
+  const dateInput = document.createElement('input');
+  dateInput.type = 'date';
+  dateInput.id = 'expo-adv-date-input';
+  Object.assign(dateInput.style, { padding: '2px 4px' });
+
+  const sameDayLabel = document.createElement('label');
+  sameDayLabel.htmlFor = 'expo-adv-same-day';
+  Object.assign(sameDayLabel.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+
+  const sameDayCheckbox = document.createElement('input');
+  sameDayCheckbox.type = 'checkbox';
+  sameDayCheckbox.id = 'expo-adv-same-day';
+
+  sameDayLabel.append(sameDayCheckbox, document.createTextNode('同じ日'));
+
+  dateControlWrap.append(dateControlLabel, dateInput, sameDayLabel);
+
+  sameDayCheckbox.addEventListener('change', () => {
+    setSameDayPreference(sameDayCheckbox.checked);
+  });
+  dateInput.addEventListener('change', () => {
+    setTargetDatePreference(dateInput.value);
+  });
+
+  sameDayCheckboxControl = sameDayCheckbox;
+  dateInputControl = dateInput;
+  updateDateControlState();
+
+  const timeControlWrap = document.createElement('span');
+  timeControlWrap.id = 'expo-adv-time-control';
+  Object.assign(timeControlWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+  const timeControlLabel = document.createElement('span');
+  timeControlLabel.textContent = '希望時間:';
+
+  const timeOptionsContainer = document.createElement('span');
+  Object.assign(timeOptionsContainer.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+
+  timeCheckboxControls = new Map();
+  for (const option of TARGET_TIME_OPTIONS) {
+    const label = document.createElement('label');
+    label.htmlFor = `expo-adv-time-${option.minutes}`;
+    Object.assign(label.style, { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `expo-adv-time-${option.minutes}`;
+
+    checkbox.addEventListener('change', () => {
+      setTimePreference(option.minutes, checkbox.checked);
+    });
+
+    label.append(checkbox, document.createTextNode(option.label));
+    timeOptionsContainer.append(label);
+    timeCheckboxControls.set(option.minutes, checkbox);
   }
+
+  timeControlWrap.append(timeControlLabel, timeOptionsContainer);
+  updateTimeControlState();
+
+  wrap.append(btn, statusWrap, currentSlotWrap, dateControlWrap, timeControlWrap, nextUpdateWrap);
+  document.documentElement.appendChild(wrap);
+
+  if (!nextUpdateTimerId) {
+    nextUpdateTimerId = window.setInterval(updateNextUpdateDisplay, 200);
+  }
+}
 
 })();
