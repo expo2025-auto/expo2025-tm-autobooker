@@ -15,7 +15,93 @@
 // ===== Inject page-context guard at document-start (persist across pages) =====
 (function __nr_installTopGuardPage(){
   try{
-    var code = "(function(){\n  try{\n    var ts = sessionStorage.getItem('__nr_blockTopUntil_ts');\n    window.__nr_blockTopUntil = ts ? (+ts) : 0;\n  }catch(e){\n    window.__nr_blockTopUntil = 0;\n  }\n  var H = history, origPush = H.pushState, origReplace = H.replaceState;\n  var isTop = function(u){\n    var s = String(u || '');\n    return s === '/' || s === location.origin + '/' || /:\\/\\/ticket\\.expo2025\\.or\\.jp\\/?$/.test(s);\n  };\n  H.pushState = function(s,t,u){\n    if (window.__nr_blockTopUntil > Date.now() && isTop(u)){\n      try{ console.warn('[NR] blocked pushState(\\\"/\\\") during reload window'); }catch(_){}\n      return;\n    }\n    return origPush.apply(this, arguments);\n  };\n  H.replaceState = function(s,t,u){\n    if (window.__nr_blockTopUntil > Date.now() && isTop(u)){\n      try{ console.warn('[NR] blocked replaceState(\\\"/\\\") during reload window'); }catch(_){}\n      return;\n    }\n    return origReplace.apply(this, arguments);\n  };\n  window.__nr_armTopGuard = function(ms){\n    var until = Date.now() + (ms || 10000);\n    window.__nr_blockTopUntil = until;\n    try{ sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); }catch(_){}\n  };\n})();";
+    var code = "(function(){
+  try{
+    var ts = sessionStorage.getItem('__nr_blockTopUntil_ts');
+    window.__nr_blockTopUntil = ts ? (+ts) : 0;
+  }catch(e){
+    window.__nr_blockTopUntil = 0;
+  }
+  var H = history;
+  function isTop(u){
+    try{
+      var p = new URL(String(u || ''), location.href).pathname;
+      return p === '/';
+      var s = String(u || '');
+      if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
+      return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+    }
+  }
+  function makeGuardedPush(orig){
+    var fn = function(state, title, url){
+      if ((window.__nr_blockTopUntil||0) > Date.now() && isTop(url)){
+        try{ console.warn('[NR] blocked pushState(\\"/\\") during reload window'); }catch(_){}
+        return;
+      }
+      return orig.apply(this, arguments);
+    };
+    try{ Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false }); }catch(_){ fn.__nrGuarded = true; }
+    return fn;
+  }
+  function makeGuardedReplace(orig){
+    var fn = function(state, title, url){
+      if ((window.__nr_blockTopUntil||0) > Date.now() && isTop(url)){
+        try{ console.warn('[NR] blocked replaceState(\\"/\\") during reload window'); }catch(_){}
+        return;
+      }
+      return orig.apply(this, arguments);
+    };
+    try{ Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false }); }catch(_){ fn.__nrGuarded = true; }
+    return fn;
+  }
+  function lockProp(obj, key, value){
+    try{
+      Object.defineProperty(obj, key, { value: value, writable: false, configurable: false });
+    }catch(_){
+      try{ obj[key] = value; }catch(__){}
+    }
+  }
+  function applyGuard(lock){
+    var currentPush = H.pushState.bind(H);
+    var currentReplace = H.replaceState.bind(H);
+    var guardedPush = makeGuardedPush(currentPush);
+    var guardedReplace = makeGuardedReplace(currentReplace);
+    H.pushState = guardedPush;
+    H.replaceState = guardedReplace;
+    if (lock){
+      lockProp(H, 'pushState', guardedPush);
+      lockProp(H, 'replaceState', guardedReplace);
+    }
+  }
+  var watchTimer = null;
+  function startWatch(durationMs){
+    var stopAt = Date.now() + (durationMs||15000);
+    if (watchTimer) clearInterval(watchTimer);
+    watchTimer = setInterval(function(){
+      var needReapply = !H.pushState.__nrGuarded || !H.replaceState.__nrGuarded;
+      var guardActive = (window.__nr_blockTopUntil||0) > Date.now();
+      if (needReapply){
+        applyGuard(true);
+        return;
+      }
+      if (!guardActive && Date.now() > stopAt){
+        clearInterval(watchTimer);
+        watchTimer = null;
+      }
+    }, 60);
+  }
+  applyGuard(true);
+  startWatch(15000);
+  window.__nr_armTopGuard = function(ms){
+    var until = Date.now() + (ms || 10000);
+    window.__nr_blockTopUntil = until;
+    try{ sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); }catch(_){}
+  };
+  window.__nr_reinforceHistoryGuard = function(ms){
+    try{ applyGuard(true); }catch(_){}
+    startWatch(ms||10000);
+  };
+})();";
     var s = document.createElement('script');
     s.textContent = code;
     (document.documentElement || document.head || document.body).appendChild(s);
@@ -23,6 +109,7 @@
   }catch(e){}
 })();
 // ===== End inject =====
+
 
 
 (function () {
@@ -39,11 +126,13 @@ function isSafariBrowser(){
 
 // --- Topページ pushState/replaceState 防止ガード（content側はアーマー呼び出しのみ） ---
 function armTopGuard(ms = 100000){
-  try{
+try{
     if (typeof window.__nr_armTopGuard === 'function'){
       window.__nr_armTopGuard(ms);
       return;
-    }
+    
+  try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
+}
   }catch(_){}
   // フォールバック：最低限の持ち越し
   try{
