@@ -1,15 +1,29 @@
 // ==UserScript==
 // @name         β　Expo2025 予約変更（iOS Safari安定化版）
 // @namespace    http://tampermonkey.net/
-// @version      0.7.1-ios-safari-fix
+// @version      0.7.2-ios-safari-fix
 // @description  iPad/iOS Safariでのリロード中にトップページへ戻される現象を抑制。毎分探索＆自動予約の現行仕様は維持。
 // @downloadURL  https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/reservation-chenge-earlier-ios-safarifix.user.js
 // @updateURL    https://raw.githubusercontent.com/expo2025-auto/expo2025-tm-autobooker/main/reservation-chenge-earlier-ios-safarifix.user.js
 // @author       you
 // @match        https://ticket.expo2025.or.jp/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @connect      ticket.expo2025.or.jp// ==/UserScript==
+
+
+// ===== Inject page-context guard at document-start (persist across pages) =====
+(function __nr_installTopGuardPage(){
+  try{
+    var code = "(function(){\n  try{\n    var ts = sessionStorage.getItem('__nr_blockTopUntil_ts');\n    window.__nr_blockTopUntil = ts ? (+ts) : 0;\n  }catch(e){\n    window.__nr_blockTopUntil = 0;\n  }\n  var H = history, origPush = H.pushState, origReplace = H.replaceState;\n  var isTop = function(u){\n    var s = String(u || '');\n    return s === '/' || s === location.origin + '/' || /:\\/\\/ticket\\.expo2025\\.or\\.jp\\/?$/.test(s);\n  };\n  H.pushState = function(s,t,u){\n    if (window.__nr_blockTopUntil > Date.now() && isTop(u)){\n      try{ console.warn('[NR] blocked pushState(\\\"/\\\") during reload window'); }catch(_){}\n      return;\n    }\n    return origPush.apply(this, arguments);\n  };\n  H.replaceState = function(s,t,u){\n    if (window.__nr_blockTopUntil > Date.now() && isTop(u)){\n      try{ console.warn('[NR] blocked replaceState(\\\"/\\\") during reload window'); }catch(_){}\n      return;\n    }\n    return origReplace.apply(this, arguments);\n  };\n  window.__nr_armTopGuard = function(ms){\n    var until = Date.now() + (ms || 10000);\n    window.__nr_blockTopUntil = until;\n    try{ sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); }catch(_){}\n  };\n})();";
+    var s = document.createElement('script');
+    s.textContent = code;
+    (document.documentElement || document.head || document.body).appendChild(s);
+    s.parentNode && s.parentNode.removeChild(s);
+  }catch(e){}
+})();
+// ===== End inject =====
+
 
 (function () {
   'use strict';
@@ -22,41 +36,23 @@ function isSafariBrowser(){
 }
 
 
-// --- Topページ pushState/replaceState 防止ガード ---
-let __nr_blockTopUntil = 0;
 
-(function patchHistoryGuard(){
-  const origPush = history.pushState.bind(history);
-  const origReplace = history.replaceState.bind(history);
-
-  history.pushState = function(state, title, url){
-    const u = String(url || '');
-    if (Date.now() < __nr_blockTopUntil &&
-        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
-      console.warn('[NR] blocked pushState("/") during reload window');
-      return;
-    }
-    return origPush(state, title, url);
-  };
-
-  history.replaceState = function(state, title, url){
-    const u = String(url || '');
-    if (Date.now() < __nr_blockTopUntil &&
-        (u === '/' || u === location.origin + '/' || /:\/\/ticket\.expo2025\.or\.jp\/?$/.test(u))) {
-      console.warn('[NR] blocked replaceState("/") during reload window');
-      return;
-    }
-    return origReplace(state, title, url);
-  };
-})();
-
+// --- Topページ pushState/replaceState 防止ガード（content側はアーマー呼び出しのみ） ---
 function armTopGuard(ms = 10000){
-  __nr_blockTopUntil = Date.now() + ms;
+  try{
+    if (typeof window.__nr_armTopGuard === 'function'){
+      window.__nr_armTopGuard(ms);
+      return;
+    }
+  }catch(_){}
+  // フォールバック：最低限の持ち越し
+  try{
+    var until = Date.now() + ms;
+    window.__nr_blockTopUntil = until;
+    sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
+  }catch(_){}
 }
-
-
-
-  /***** 調整ポイント（サイト改修時はここを直す） *****/
+/***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
     timeButton: 'td button, td [role="button"], [data-time-slot] button, [data-time-slot] [role="button"], div[role="button"][class*="style_main__button__"], button[class*="style_main__button__"], div[role="button"][aria-pressed]',
     activeButton: [
