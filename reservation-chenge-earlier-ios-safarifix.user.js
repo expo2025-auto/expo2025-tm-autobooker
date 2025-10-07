@@ -13,6 +13,7 @@
 // ==/UserScript==
 
 
+
 // ===== Inject page-context guard at document-start (persist across pages) =====
 (function __nr_installTopGuardPage(){
   try{
@@ -97,8 +98,8 @@
   window.__nr_armTopGuard = function(ms){
     var until = Date.now() + (ms || 10000);
     window.__nr_blockTopUntil = until;
-    try{ sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); }catch(_){}
-  };
+    try{ sessionStorage.setItem('__nr_blockTopUntil_ts', String(until)); }
+;
   window.__nr_reinforceHistoryGuard = function(ms){
     try{ applyGuard(true); }catch(_){}
     startWatch(ms||10000);
@@ -111,6 +112,7 @@
   }catch(e){}
 })();
 // ===== End inject =====
+
 
 
 
@@ -142,8 +144,20 @@ function armTopGuard(ms = 100000){
     window.__nr_blockTopUntil = until;
     sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
   }catch(_){}
-  try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); } catch(_){}
-}
+  try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); }
+
+catch(_){}
+      return;
+    }
+  }catch(_){}
+  // フォールバック：最低限の持ち越し
+  try{
+    var until = Date.now() + ms;
+    window.__nr_blockTopUntil = until;
+    sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
+  }catch(_){}
+  try { if (typeof window.__nr_reinforceHistoryGuard === 'function') window.__nr_reinforceHistoryGuard(ms); }
+
 catch(_){}
 }
   }catch(_){}
@@ -152,8 +166,8 @@ catch(_){}
     var until = Date.now() + ms;
     window.__nr_blockTopUntil = until;
     sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
-  }catch(_){}
-}
+  }
+
 /***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
     timeButton: 'td button, td [role="button"], [data-time-slot] button, [data-time-slot] [role="button"], div[role="button"][class*="style_main__button__"], button[class*="style_main__button__"], div[role="button"][aria-pressed]',
