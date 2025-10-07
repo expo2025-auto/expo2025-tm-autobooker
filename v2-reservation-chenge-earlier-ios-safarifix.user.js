@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         β　Expo2025 予約変更
+// @name         ios　β　Expo2025 予約変更　
 // @namespace    http://tampermonkey.net/
 // @version      0.7
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内4回までリトライ。
