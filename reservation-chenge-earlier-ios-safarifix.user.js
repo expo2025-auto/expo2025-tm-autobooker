@@ -1482,4 +1482,84 @@
             location.reload();
         }
     }
+    // ===== 操作パネル（UI） =====
+function createControlPanel(){
+  if (document.getElementById('nr-expo-panel')) return;
+
+  const root = document.createElement('div');
+  root.id = 'nr-expo-panel';
+  root.style.cssText = [
+    'position:fixed','z-index:2147483647','right:10px','bottom:10px',
+    'font-size:12px','line-height:1.4','background:rgba(0,0,0,.75)','color:#fff',
+    'padding:10px','border-radius:10px','box-shadow:0 4px 12px rgba(0,0,0,.3)',
+    'backdrop-filter:saturate(1.2) blur(2px)','-webkit-backdrop-filter:saturate(1.2) blur(2px)'
+  ].join(';');
+
+  root.innerHTML = `
+    <div style="font-weight:600;margin-bottom:6px;">Expo予約変更（iOS安定化）</div>
+    <div>状態: <span id="nr-status">待機中</span></div>
+    <div>現在の予約: <span id="nr-current-slot">未取得</span></div>
+    <div>次の更新まで: <span id="nr-next">--</span></div>
+    <hr style="opacity:.3;margin:6px 0;">
+    <label style="display:flex;gap:6px;align-items:center;">
+      <input id="nr-same-day" type="checkbox" checked> 同日のみ
+    </label>
+    <label style="display:flex;gap:6px;align-items:center;">
+      指定日: <input id="nr-target-date" type="date" style="color:#000;background:#fff;border-radius:6px;padding:2px 4px;">
+    </label>
+    <div id="nr-time-options" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;"></div>
+  `;
+  (document.documentElement || document.body).appendChild(root);
+
+  // --- 既存の変数へDOMをひも付け ---
+  statusIndicator = root.querySelector('#nr-status');
+  currentSlotIndicator = root.querySelector('#nr-current-slot');
+  nextUpdateIndicator = root.querySelector('#nr-next');
+
+  sameDayCheckboxControl = root.querySelector('#nr-same-day');
+  dateInputControl = root.querySelector('#nr-target-date');
+
+  // 時間帯チェックボックス（既存の TARGET_TIME_OPTIONS を利用）
+  timeCheckboxControls = new Map();
+  const timeWrap = root.querySelector('#nr-time-options');
+  (TARGET_TIME_OPTIONS || []).forEach(opt => {
+    const id = 'nr-time-' + opt.minutes;
+    const label = document.createElement('label');
+    label.style.display = 'flex';
+    label.style.gap = '6px';
+    label.style.alignItems = 'center';
+    label.innerHTML = `<input type="checkbox" id="${id}">${opt.label}`;
+    timeWrap.appendChild(label);
+    const cb = label.querySelector('input');
+    timeCheckboxControls.set(opt.minutes, cb);
+    cb.addEventListener('change', () => setTimePreference(opt.minutes, cb.checked));
+  });
+
+  // --- イベント結線（既存の setter を呼ぶだけ） ---
+  sameDayCheckboxControl.addEventListener('change', () => setSameDayPreference(sameDayCheckboxControl.checked));
+  dateInputControl.addEventListener('change', () => setTargetDatePreference(dateInputControl.value));
+
+  // --- 初期表示をUIに反映 ---
+  updateDateControlState();
+  updateTimeControlState();
+  setCurrentSlotDisplay(currentSlotDisplay.label || '', {
+    estimated: currentSlotDisplay.estimated,
+    fallback: currentSlotDisplay.text
+  });
+
+  // 「次の更新まで」を定期更新
+  if (nextUpdateTimerId) clearInterval(nextUpdateTimerId);
+  nextUpdateTimerId = setInterval(updateNextUpdateDisplay, 500);
+  updateNextUpdateDisplay();
+}
+
+// DOM準備を待ってパネル作成
+(function waitBody(){
+  if (document.body || document.documentElement){
+    try { createControlPanel(); } catch(e){ console.warn('[NR] panel error', e); }
+    return;
+  }
+  setTimeout(waitBody, 30);
+})();
+
 } )();
