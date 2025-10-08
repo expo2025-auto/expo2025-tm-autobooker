@@ -1591,4 +1591,17 @@ if (document.readyState === 'loading') {
 } else {
   ensureToggle();
 }
+
+  // ===== main loop (起動) =====
+(async function startLoop(){
+  try { await getServerDate(); } catch(_) { /* サーバ時刻取得に失敗しても続行 */ }
+  // 即時1回目（ページロード直後の状態も確認）
+  try { await tick(); } catch(e){ console.warn('[ExpoAdvance] tick error (first)', e); }
+  // 以後200msピッチで実行（ON/OFFは isEnabled でゲート）
+  setInterval(async () => {
+    if (!isEnabled()) return;
+    try { await tick(); } catch(e){ console.warn('[ExpoAdvance] tick error', e); }
+  }, 200);
+})();
+
 })();
