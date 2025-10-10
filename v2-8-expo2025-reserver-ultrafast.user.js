@@ -396,29 +396,6 @@ function isOtherMonthCell(cell){
   if(al.includes('表示月の日付ではありません'))return true;
   return false;
 }
-function parseYearMonthKey(text){
-  if(!text)return null;
-  const m=String(text).match(/(\d{4})年\s*(\d{1,2})月/);
-  if(!m)return null;
-  const y=m[1];
-  const mm=('0'+m[2]).slice(-2);
-  return `${y}-${mm}`;
-}
-function getVisibleYearMonthKey(){
-  const spans=A('.style_year_month__iqQQH');
-  for(const span of spans){
-    if(vis(span)){const k=parseYearMonthKey(span.textContent);if(k)return k;}
-  }
-  for(const span of spans){
-    const k=parseYearMonthKey(span.textContent);if(k)return k;
-  }
-  return null;
-}
-function isoToYearMonthKey(iso){
-  const m=String(iso||'').match(/^(\d{4})-(\d{2})/);
-  if(!m)return null;
-  return `${m[1]}-${m[2]}`;
-}
 function getCellByISO(iso){
   const t=A(`.style_selector_item__9RWJw time[datetime="${iso}"]`).find(vis);
   if(!t)return null;
@@ -493,7 +470,6 @@ async function captureAvailabilityState(dates){
     const entry={iso,status:'missing',timeKeys:[]};
     state.dates[iso]=entry;
     if(!iso)continue;
-    try{await showMonthForISO(iso);}catch{}
     const cell=getCellByISO(iso);
     if(!cell){entry.status='missing';continue;}
     if(!isDateCellEnabled(cell)){entry.status='disabled';continue;}
@@ -525,20 +501,39 @@ function availabilityStatesEqual(a,b,dates){
   }
   return true;
 }
+function availabilityEntryIsActive(entry){
+  const status=entry?.status||'';
+  return status==='enabled'||status==='selectFailed';
+}
+function availabilityHasNewOpportunities(prevState,currentState,dates){
+  if(!currentState||!currentState.dates)return false;
+  if(!prevState||!prevState.dates)return false;
+  const list=Array.isArray(dates)?dates.slice():[];
+  list.sort();
+  for(const iso of list){
+    const current=currentState.dates?.[iso];
+    if(!availabilityEntryIsActive(current))continue;
+    const currentKeys=normalizeAvailabilityTimeKeys(current?.timeKeys||[]);
+    if(!currentKeys.length)continue;
+    const prev=prevState.dates?.[iso];
+    if(!availabilityEntryIsActive(prev))return true;
+    const prevKeys=normalizeAvailabilityTimeKeys(prev?.timeKeys||[]);
+    for(const key of currentKeys){
+      if(!prevKeys.includes(key))return true;
+    }
+  }
+  return false;
+}
 async function hasSelectableDateForDates(dates){
   if(!Array.isArray(dates)||!dates.length)return false;
-  const checkCurrentMonth=()=>{
-    for(const ds of dates){
-      const cell=getCellByISO(ds);
-      if(cell&&isDateCellEnabled(cell))return true;
-    }
-    return false;
-  };
-  if(checkCurrentMonth())return true;
-  const octoberList=dates.filter(v=>/-10-/.test(v));
-  if(!octoberList.length)return false;
-  await showMonthForISO(octoberList[0]);
-  return checkCurrentMonth();
+  const ready=await waitCalendarReady(2000);
+  if(!ready)return false;
+  for(const ds of dates){
+    if(!ds)continue;
+    const cell=getCellByISO(ds);
+    if(cell&&isDateCellEnabled(cell))return true;
+  }
+  return false;
 }
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
@@ -830,174 +825,10 @@ async function waitOutcome(timeout=12000){
   return result||'none';
 }
 
-/* ========= 次月ページめくり（JSパス固定 + ハードクリック） ========= */
-const NEXT_MONTH_PATH = '#__next main div[class^="style_main__calendar__"] button[class*="stepper_button__"]:last-of-type';
-
-/* --- 置き換え②：ハードクリック（B方式寄り） --- */
-async function hardClick(el, tries=3, wait=0){
-  if(!el) return false;
-  try{ el.scrollIntoView({block:'center',behavior:'instant'}) }catch{}
-  try{ el.focus?.({preventScroll:true}) }catch{}
-  const rect = el.getBoundingClientRect();
-  const cx = Math.max(0, Math.floor(rect.left + rect.width/2));
-  const cy = Math.max(0, Math.floor(rect.top + rect.height/2));
-  const fire = (type,target)=>{ try{
-    const ev = new MouseEvent(type,{bubbles:true,clientX:cx,clientY:cy});
-    target.dispatchEvent(ev);
-  }catch{} };
-  for(let i=0;i<tries;i++){
-    const tgt = document.elementFromPoint(cx,cy) || el;
-    fire('mouseover',tgt);
-    fire('mousedown',tgt);
-    try{ tgt.click?.() }catch{}
-    fire('mouseup',tgt);
-    const img = el.querySelector?.('img');
-    if(img){
-      try{ img.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:cx,clientY:cy})) }catch{}
-      try{ img.click?.() }catch{}
-      try{ img.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:cx,clientY:cy})) }catch{}
-    }
-    await new Promise(r=>{if(wait>0){setTimeout(r,wait);}else{r();}});
-  }
-  return true;
-}
-
-/* --- 置き換え③：findNextBtn（スマホ版と同等のボタン探索） --- */
-function findNextBtn(){
-  const byPath = document.querySelector(NEXT_MONTH_PATH);
-  if(byPath && isEnabled(byPath)) return byPath;
-
-  const root = getCalendarRoot();
-  let scope = root;
-  if(root && root.querySelector){
-    const inner = root.querySelector('[class^="style_main__calendar__"]');
-    if(inner && inner!==root) scope = inner;
-  }
-  const seen = new Set();
-  const list = [];
-  const push = el => { if(el && !seen.has(el)){ seen.add(el); list.push(el); } };
-
-  push(byPath);
-
-  const headerSelectors = [
-    '.style_header__KIQKN',
-    '.style_header__',
-    '.style_header',
-    'header',
-    '[class*="header"]'
-  ];
-  for(const sel of headerSelectors){
-    const header = scope && scope.querySelector ? scope.querySelector(sel) : null;
-    if(header){
-      Array.from(header.querySelectorAll('button')).forEach(push);
-      if(list.length) break;
-    }
-  }
-
-  if(scope && scope.querySelectorAll){
-    Array.from(scope.querySelectorAll('button.style_stepper_button__N7zDX, button[class*="stepper"]')).forEach(push);
-  }
-
-  const rectLeft = el => {
-    try{
-      const rect = el.getBoundingClientRect();
-      return isFinite(rect.left) ? rect.left : -Infinity;
-    }catch{
-      return -Infinity;
-    }
-  };
-  const pickRightMost = arr => {
-    if(!arr.length) return null;
-    const sorted = arr.slice().sort((a,b)=>rectLeft(a)-rectLeft(b));
-    return sorted[sorted.length-1];
-  };
-
-  const enabled = list.filter(isEnabled);
-  const headerBtn = pickRightMost(enabled);
-  if(headerBtn) return headerBtn;
-
-  const hasNextHint = el => {
-    const texts = [];
-    const add = v => { if(v) texts.push(String(v)); };
-    add(el.textContent||'');
-    if(el.getAttribute){
-      add(el.getAttribute('aria-label'));
-      add(el.getAttribute('title'));
-    }
-    const labelledby = el.getAttribute ? el.getAttribute('aria-labelledby') : null;
-    if(labelledby){
-      labelledby.split(/\s+/).forEach(id=>{
-        const labelEl = document.getElementById(id.trim());
-        if(labelEl) add(labelEl.textContent||'');
-      });
-    }
-    const describedby = el.getAttribute ? el.getAttribute('aria-describedby') : null;
-    if(describedby){
-      describedby.split(/\s+/).forEach(id=>{
-        const descEl = document.getElementById(id.trim());
-        if(descEl) add(descEl.textContent||'');
-      });
-    }
-    if(el.querySelectorAll){
-      Array.from(el.querySelectorAll('img[alt]')).forEach(img=>add(img.getAttribute('alt')));
-    }
-    const joined = texts.join(' ').toLowerCase();
-    const compact = joined.replace(/\s+/g,'');
-    const hints=['next','翌','次','来月','らいげつ','か月先','ヶ月先','ｶ月先','先に進む','月先に進む'];
-    if(hints.some(h=>compact.includes(h))) return true;
-    return false;
-  };
-
-  const hintCandidates = (scope && scope.querySelectorAll)
-    ? Array.from(scope.querySelectorAll('button, [role="button"]')).filter(el=>isEnabled(el)&&hasNextHint(el))
-    : [];
-  const hinted = pickRightMost(hintCandidates);
-  if(hinted) return hinted;
-
-  return byPath || null;
-}
-
-/* --- 置き換え④：描画監視→押す→10月セル/更新待ち→小安定 --- */
+/* --- 置き換え③：10月固定表示のためページ送り不要 --- */
 async function showMonthForISO(iso){
-  if(!/-10-/.test(iso)) return true;
-  await waitCalendarReady(5000);
-  if(getCellByISO(iso)) return true;
-
-  const targetKey = isoToYearMonthKey(iso);
-
-  // 最大3ラウンド試行（毎回ボタンを取り直し）
-  for(let round=0; round<3; round++){
-    const btn=findNextBtn();
-    if(!btn) break;
-
-    const clickable=isEnabled(btn)?btn:await waitEnabled(btn,2000);
-    if(!clickable) continue;
-
-    try{ clickable.scrollIntoView({block:'center',behavior:'instant'}); }catch{}
-    const beforeKey=getVisibleYearMonthKey();
-
-    await hardClick(clickable,3,0);
-
-    const root=getCalendarRoot();
-    await waitUntil(()=>{
-      if(getCellByISO(iso)) return true;
-      const nowKey=getVisibleYearMonthKey();
-      if(beforeKey&&nowKey&&nowKey!==beforeKey) return true;
-      if(targetKey&&nowKey===targetKey) return true;
-      return null;
-    },{timeout:900+round*500,attrs:['class','style','aria-hidden','aria-pressed'],root});
-
-    if(getCellByISO(iso)){
-      await new Promise(r=>setTimeout(r,0));
-      return true;
-    }
-
-    if(targetKey&&getVisibleYearMonthKey()===targetKey){
-      await new Promise(r=>setTimeout(r,0));
-      const hit=getCellByISO(iso);
-      if(hit) return true;
-    }
-  }
+  if(!iso)return false;
+  await waitCalendarReady(3000);
   return !!getCellByISO(iso);
 }
 
@@ -1007,11 +838,8 @@ async function tryOnceForDate(d){
   const calOK=await waitCalendarReady(5000);
   if(!calOK) return 'none';
 
-  // まず今の月を見て、なければ10月指定時のみページ送り
-  if(!getCellByISO(iso)){
-    const shown = await showMonthForISO(iso);
-    if(!shown) return 'none';
-  }
+  // 表示月は10月固定のため存在確認のみ
+  if(!getCellByISO(iso)&&!await showMonthForISO(iso)) return 'none';
 
   const selOK=await ensureDate(iso,8000);
   if(!selOK) return 'notSelectable';
@@ -1221,6 +1049,18 @@ async function runCycle(){
     availabilityCurrent=await captureAvailabilityState(conf.dates);
     if(prevAvailability&&availabilityCurrent&&availabilityStatesEqual(prevAvailability,availabilityCurrent,conf.dates)){
       ui.setStatus('空き枠状況に変化なし（即再読込）');
+      availabilityFinal=availabilityCurrent;
+      scheduleImmediateReload(45);
+      return;
+    }
+    if(!prevAvailability&&availabilityCurrent){
+      ui.setStatus('空き枠状況を記録しました（即再読込）');
+      availabilityFinal=availabilityCurrent;
+      scheduleImmediateReload(45);
+      return;
+    }
+    if(prevAvailability&&availabilityCurrent&&!availabilityHasNewOpportunities(prevAvailability,availabilityCurrent,conf.dates)){
+      ui.setStatus('指定日の新規空き枠なし（即再読込）');
       availabilityFinal=availabilityCurrent;
       scheduleImmediateReload(45);
       return;
