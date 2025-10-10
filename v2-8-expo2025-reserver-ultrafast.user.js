@@ -1178,9 +1178,10 @@ async function runCycle(){
   const prevSnapshot=loadAvailabilitySnapshot();
   let snapshotCurrent=null;
   let snapshotFinal=null;
-  const scheduleImmediateReload=()=>{
+  const scheduleImmediateReload=(delay=120)=>{
     clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},200);
+    const wait=Math.max(30,Number.isFinite(delay)?delay:120);
+    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},wait);
   };
 
   try{
@@ -1192,27 +1193,25 @@ async function runCycle(){
 
     snapshotCurrent=computeAvailabilitySnapshot(conf.dates);
 
-    if(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
+    const fastMonitor=Boolean(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent);
+    if(fastMonitor){
+      ui.setStatus('空き枠探索中（高速確認）');
+    }else if(prevSnapshot&&snapshotCurrent){
       ui.setStatus('空き状況の変化待ち');
       const changedSnapshot=await waitAvailabilityChange(snapshotCurrent,conf.dates,6000);
       if(changedSnapshot){
         snapshotCurrent=changedSnapshot;
         anySelectable=await hasSelectableDateForDates(conf.dates);
-      }else{
-        if(anySelectable){
-          ui.setStatus('空き状況に変化なし（即時リロード）');
-          snapshotFinal=snapshotCurrent;
-          scheduleImmediateReload();
-        }else{
-          ui.setStatus('再試行中');
-          snapshotFinal=snapshotCurrent;
-          scheduleRetryOrNextMinute();
-        }
-        return;
       }
     }
 
     if(!anySelectable){
+      if(fastMonitor){
+        ui.setStatus('空き枠なし（高速リロード）');
+        snapshotFinal=snapshotCurrent;
+        scheduleImmediateReload();
+        return;
+      }
       ui.setStatus('再試行中');
       snapshotFinal=snapshotCurrent;
       scheduleRetryOrNextMinute();
@@ -1231,10 +1230,15 @@ async function runCycle(){
 
     snapshotFinal=computeAvailabilitySnapshot(conf.dates);
 
-    const d=delayUntilNextMinute_12s();
-    ui.setStatus('待機中');
-    clearTimeout(Tm);
-    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    if(fastMonitor){
+      ui.setStatus('高速再試行待機');
+      scheduleImmediateReload();
+    }else{
+      const d=delayUntilNextMinute_12s();
+      ui.setStatus('待機中');
+      clearTimeout(Tm);
+      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    }
   }finally{
     const snapToStore=snapshotFinal??snapshotCurrent??(conf.dates.length?computeAvailabilitySnapshot(conf.dates):null);
     if(snapToStore){
