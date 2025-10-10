@@ -416,6 +416,7 @@ function isDateCellEnabled(cell){
 }
 const AVAIL_STATE_KEY='nr_last_availability_state_v1';
 const AVAIL_SNAPSHOT_KEY_OLD='nr_last_availability_snapshot_v1';
+const AVAIL_PRE_RELOAD_KEY='nr_last_availability_before_reload_v1';
 function loadAvailabilityState(){
   try{
     const raw=sessionStorage.getItem(AVAIL_STATE_KEY);
@@ -435,6 +436,95 @@ function saveAvailabilityState(state){
     }
     try{sessionStorage.removeItem(AVAIL_SNAPSHOT_KEY_OLD);}catch{}
   }catch{}
+}
+function loadPreReloadAvailability(){
+  try{
+    const raw=sessionStorage.getItem(AVAIL_PRE_RELOAD_KEY);
+    if(raw&&raw.length){
+      const parsed=JSON.parse(raw);
+      if(parsed&&typeof parsed==='object')return parsed;
+    }
+  }catch{}
+  return null;
+}
+function savePreReloadAvailability(state){
+  try{
+    if(state){
+      sessionStorage.setItem(AVAIL_PRE_RELOAD_KEY,JSON.stringify(state));
+    }else{
+      sessionStorage.removeItem(AVAIL_PRE_RELOAD_KEY);
+    }
+  }catch{}
+}
+function sameMinute(tsA,tsB){
+  if(!Number.isFinite(tsA)||!Number.isFinite(tsB))return false;
+  const a=new Date(tsA);
+  const b=new Date(tsB);
+  return a.getFullYear()===b.getFullYear()&&
+    a.getMonth()===b.getMonth()&&
+    a.getDate()===b.getDate()&&
+    a.getHours()===b.getHours()&&
+    a.getMinutes()===b.getMinutes();
+}
+let preReloadCapturePromise=null;
+async function ensurePreReloadAvailability(now){
+  if(!state.r||state.keepAlive)return loadPreReloadAvailability();
+  if(!Array.isArray(conf.dates)||!conf.dates.length){
+    savePreReloadAvailability(null);
+    return null;
+  }
+  const reference=now instanceof Date?now:serverNow();
+  const existing=loadPreReloadAvailability();
+  if(existing&&sameMinute(existing.capturedAt,reference.getTime()))return existing;
+  if(preReloadCapturePromise)return preReloadCapturePromise;
+  preReloadCapturePromise=(async()=>{
+    try{
+      const ready=await waitCalendarReady(3000);
+      if(!ready){
+        savePreReloadAvailability(null);
+        return null;
+      }
+      const snapshot=await captureAvailabilityState(conf.dates).catch(()=>null);
+      if(snapshot){
+        const stamp=serverNow();
+        snapshot.capturedAt=stamp.getTime();
+        savePreReloadAvailability(snapshot);
+        return snapshot;
+      }
+      savePreReloadAvailability(null);
+      return null;
+    }finally{
+      preReloadCapturePromise=null;
+    }
+  })();
+  try{
+    return await preReloadCapturePromise;
+  }catch{
+    return null;
+  }
+}
+let preReloadScanTimer=null;
+function schedulePreReloadScan(){
+  if(preReloadScanTimer){clearTimeout(preReloadScanTimer);preReloadScanTimer=null;}
+  const now=serverNow();
+  const next=new Date(now.getTime());
+  next.setSeconds(0,0);
+  if(now.getSeconds()>0||now.getMilliseconds()>0)next.setMinutes(next.getMinutes()+1);
+  const delay=next.getTime()-now.getTime();
+  preReloadScanTimer=setTimeout(()=>{performPreReloadScan().catch(()=>{});},Math.max(0,delay));
+}
+async function performPreReloadScan(){
+  preReloadScanTimer=null;
+  try{
+    if(!state.r||state.keepAlive||!Array.isArray(conf.dates)||!conf.dates.length){
+      savePreReloadAvailability(null);
+    }else{
+      await ensurePreReloadAvailability(serverNow());
+    }
+  }catch{}
+  finally{
+    schedulePreReloadScan();
+  }
 }
 function normalizeAvailabilityTimeKeys(list){
   if(!Array.isArray(list)||!list.length)return[];
@@ -875,7 +965,7 @@ let serverOffset=0;
 async function syncServer(){try{const res=await fetch(location.origin+'/',{method:'HEAD',cache:'no-store'});const dh=res.headers.get('date');if(dh){const sv=new Date(dh).getTime();serverOffset=sv-Date.now()}}catch{}}
 function serverNow(){return new Date(Date.now()+serverOffset)}
 function secondsInMinute(){const n=serverNow();return n.getSeconds()+n.getMilliseconds()/1000}
-function delayUntilNextMinute_12s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(12,0);if(n.getSeconds()>12||(n.getSeconds()===12&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
+function delayUntilNextMinute_13s(){const n=serverNow(),nx=new Date(n.getTime());nx.setSeconds(13,0);if(n.getSeconds()>13||(n.getSeconds()===13&&n.getMilliseconds()>0))nx.setMinutes(nx.getMinutes()+1);return nx.getTime()-n.getTime()}
 function scheduleRetryOrNextMinute(){
   const sec=secondsInMinute();
   if(sec<25){
@@ -884,7 +974,7 @@ function scheduleRetryOrNextMinute(){
       safeReload();
     }
   }else{
-    const d=delayUntilNextMinute_12s();
+    const d=delayUntilNextMinute_13s();
     ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
@@ -996,6 +1086,8 @@ if(state.keepAlive){
   try{checkAutoSwitch(serverNow())}catch{}
 }
 
+(async()=>{try{await syncServer();}catch{}schedulePreReloadScan();})();
+
 /* ========= メイン ========= */
 function stopOK(msg){try{clearTimeout(Tm)}catch{}state.r=false;saveState();ui.uncheck();if(msg){setTimeout(()=>{try{ui.setStatus(msg)}catch{}},0)}}
 
@@ -1014,9 +1106,11 @@ async function runCycle(){
   }
 
   await syncServer().catch(()=>{});
-  const sec=secondsInMinute();
-  if(sec<12){
-    const d=delayUntilNextMinute_12s();
+  const nowForCycle=serverNow();
+  const sec=nowForCycle.getSeconds()+nowForCycle.getMilliseconds()/1000;
+  if(sec<13){
+    try{await ensurePreReloadAvailability(nowForCycle);}catch{}
+    const d=delayUntilNextMinute_13s();
     ui.setStatus('待機中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
@@ -1024,7 +1118,7 @@ async function runCycle(){
   }
 
   if(sec>=25){
-    const d=delayUntilNextMinute_12s();
+    const d=delayUntilNextMinute_13s();
     ui.setStatus('再試行中');
     clearTimeout(Tm);
     Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
@@ -1034,6 +1128,14 @@ async function runCycle(){
   ui.setStatus('空き枠探索中');
 
   const prevAvailability=loadAvailabilityState();
+  let preReloadAvailability=loadPreReloadAvailability();
+  const comparisonNow=serverNow();
+  if(preReloadAvailability&&!sameMinute(preReloadAvailability.capturedAt,comparisonNow.getTime())){
+    preReloadAvailability=null;
+    savePreReloadAvailability(null);
+  }
+  let preReloadUsed=false;
+  let changeDetectedFromPreReload=false;
   let availabilityCurrent=null;
   let availabilityFinal=null;
   const scheduleImmediateReload=(delay=120)=>{
@@ -1047,19 +1149,31 @@ async function runCycle(){
     if(!calOK){ui.setStatus('再試行中');scheduleRetryOrNextMinute();return;}
 
     availabilityCurrent=await captureAvailabilityState(conf.dates);
-    if(prevAvailability&&availabilityCurrent&&availabilityStatesEqual(prevAvailability,availabilityCurrent,conf.dates)){
+    if(preReloadAvailability&&availabilityCurrent){
+      preReloadUsed=true;
+      if(!availabilityStatesEqual(preReloadAvailability,availabilityCurrent,conf.dates)){
+        changeDetectedFromPreReload=true;
+        ui.setStatus('空き枠の変化を検出しました（予約試行）');
+      }else{
+        ui.setStatus('空き枠状況に変化なし（即再読込）');
+        availabilityFinal=availabilityCurrent;
+        scheduleImmediateReload(45);
+        return;
+      }
+    }
+    if(!changeDetectedFromPreReload&&prevAvailability&&availabilityCurrent&&availabilityStatesEqual(prevAvailability,availabilityCurrent,conf.dates)){
       ui.setStatus('空き枠状況に変化なし（即再読込）');
       availabilityFinal=availabilityCurrent;
       scheduleImmediateReload(45);
       return;
     }
-    if(!prevAvailability&&availabilityCurrent){
+    if(!changeDetectedFromPreReload&&!prevAvailability&&availabilityCurrent){
       ui.setStatus('空き枠状況を記録しました（即再読込）');
       availabilityFinal=availabilityCurrent;
       scheduleImmediateReload(45);
       return;
     }
-    if(prevAvailability&&availabilityCurrent&&!availabilityHasNewOpportunities(prevAvailability,availabilityCurrent,conf.dates)){
+    if(!changeDetectedFromPreReload&&prevAvailability&&availabilityCurrent&&!availabilityHasNewOpportunities(prevAvailability,availabilityCurrent,conf.dates)){
       ui.setStatus('指定日の新規空き枠なし（即再読込）');
       availabilityFinal=availabilityCurrent;
       scheduleImmediateReload(45);
@@ -1125,6 +1239,9 @@ async function runCycle(){
     ui.setStatus('再試行準備中');
     scheduleImmediateReload(45);
   }finally{
+    if(preReloadUsed){
+      savePreReloadAvailability(null);
+    }
     const stateToStore=availabilityFinal??availabilityCurrent;
     if(stateToStore){
       saveAvailabilityState(stateToStore);
