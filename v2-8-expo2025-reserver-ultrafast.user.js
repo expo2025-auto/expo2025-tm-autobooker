@@ -437,40 +437,93 @@ function isDateCellEnabled(cell){
   const ng=cell.querySelector('img[src*="calendar_ng.svg"], img[alt*="満員"]'); if(ng)return false;
   return true;
 }
-const AVAIL_SNAPSHOT_KEY='nr_last_availability_snapshot_v1';
-function loadAvailabilitySnapshot(){
+const AVAIL_STATE_KEY='nr_last_availability_state_v1';
+const AVAIL_SNAPSHOT_KEY_OLD='nr_last_availability_snapshot_v1';
+function loadAvailabilityState(){
   try{
-    const val=sessionStorage.getItem(AVAIL_SNAPSHOT_KEY);
-    return val&&val.length?val:null;
-  }catch{return null}
-}
-function saveAvailabilitySnapshot(val){
-  try{
-    if(val&&val.length){
-      sessionStorage.setItem(AVAIL_SNAPSHOT_KEY,val);
-    }else{
-      sessionStorage.removeItem(AVAIL_SNAPSHOT_KEY);
+    const raw=sessionStorage.getItem(AVAIL_STATE_KEY);
+    if(raw&&raw.length){
+      const parsed=JSON.parse(raw);
+      if(parsed&&typeof parsed==='object')return parsed;
     }
   }catch{}
+  return null;
 }
-function computeAvailabilitySnapshot(dates){
+function saveAvailabilityState(state){
   try{
-    if(!Array.isArray(dates)||!dates.length)return null;
-    const parts=[];
-    for(const iso of dates){
-      if(!iso){
-        parts.push('?:missing');
-        continue;
-      }
-      const cell=getCellByISO(iso);
-      let status='missing';
-      if(cell){
-        status=isDateCellEnabled(cell)?'enabled':'disabled';
-      }
-      parts.push(`${iso}:${status}`);
+    if(state){
+      sessionStorage.setItem(AVAIL_STATE_KEY,JSON.stringify(state));
+    }else{
+      sessionStorage.removeItem(AVAIL_STATE_KEY);
     }
-    return parts.join('|');
-  }catch{return null}
+    try{sessionStorage.removeItem(AVAIL_SNAPSHOT_KEY_OLD);}catch{}
+  }catch{}
+}
+function normalizeAvailabilityTimeKeys(list){
+  if(!Array.isArray(list)||!list.length)return[];
+  const seen=new Set();
+  const filtered=[];
+  for(const key of list){
+    if(!Object.prototype.hasOwnProperty.call(TIME_KEY_ORDER,key))continue;
+    if(seen.has(key))continue;
+    seen.add(key);
+    filtered.push(key);
+  }
+  filtered.sort((a,b)=>TIME_KEY_ORDER[a]-TIME_KEY_ORDER[b]);
+  return filtered;
+}
+function collectAvailableTimeKeys(){
+  const slots=collectSlotElements();
+  const keys=[];
+  for(const el of slots){
+    if(!isEnabled(el))continue;
+    const key=slotElementKey(el);
+    if(!key)continue;
+    if(!keys.includes(key))keys.push(key);
+  }
+  return normalizeAvailabilityTimeKeys(keys);
+}
+async function captureAvailabilityState(dates){
+  if(!Array.isArray(dates)||!dates.length)return null;
+  const ready=await waitCalendarReady(2000);
+  if(!ready)return null;
+  const state={version:1,dates:{}};
+  const originalISO=selectedDateISO();
+  for(const iso of dates){
+    const entry={iso,status:'missing',timeKeys:[]};
+    state.dates[iso]=entry;
+    if(!iso)continue;
+    try{await showMonthForISO(iso);}catch{}
+    const cell=getCellByISO(iso);
+    if(!cell){entry.status='missing';continue;}
+    if(!isDateCellEnabled(cell)){entry.status='disabled';continue;}
+    entry.status='enabled';
+    const ensured=await ensureDate(iso,2500);
+    if(!ensured){entry.status='selectFailed';continue;}
+    await new Promise(res=>setTimeout(res,80));
+    entry.timeKeys=collectAvailableTimeKeys();
+  }
+  if(originalISO&&originalISO!==selectedDateISO()){
+    try{await ensureDate(originalISO,1200);}catch{}
+  }
+  return state;
+}
+function availabilityStatesEqual(a,b,dates){
+  if(!a||!b||!a.dates||!b.dates)return false;
+  const list=Array.isArray(dates)?dates.slice():[];
+  list.sort();
+  for(const iso of list){
+    const entryA=a.dates?.[iso];
+    const entryB=b.dates?.[iso];
+    const statusA=entryA?.status||'missing';
+    const statusB=entryB?.status||'missing';
+    if(statusA!==statusB)return false;
+    const keysA=normalizeAvailabilityTimeKeys(entryA?.timeKeys||[]);
+    const keysB=normalizeAvailabilityTimeKeys(entryB?.timeKeys||[]);
+    if(keysA.length!==keysB.length)return false;
+    for(let i=0;i<keysA.length;i++){if(keysA[i]!==keysB[i])return false;}
+  }
+  return true;
 }
 async function hasSelectableDateForDates(dates){
   if(!Array.isArray(dates)||!dates.length)return false;
@@ -486,29 +539,6 @@ async function hasSelectableDateForDates(dates){
   if(!octoberList.length)return false;
   await showMonthForISO(octoberList[0]);
   return checkCurrentMonth();
-}
-async function waitAvailabilityChange(prevSnapshot,dates,timeout=6000){
-  if(!prevSnapshot||!Array.isArray(dates)||!dates.length)return null;
-  const root=getCalendarRoot();
-  return await new Promise(resolve=>{
-    const t0=Date.now();
-    let done=false;
-    const finish=val=>{if(done)return;done=true;try{mo.disconnect()}catch{};clearInterval(iv);resolve(val);};
-    const check=()=>{
-      const snap=computeAvailabilitySnapshot(dates);
-      if(snap&&snap!==prevSnapshot){
-        finish(snap);
-        return;
-      }
-      if(Date.now()-t0>=timeout){
-        finish(null);
-      }
-    };
-    const mo=new MutationObserver(check);
-    try{mo.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-pressed','aria-disabled','aria-hidden','data-disabled']});}catch{}
-    const iv=setInterval(check,150);
-    check();
-  });
 }
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
@@ -1175,9 +1205,9 @@ async function runCycle(){
 
   ui.setStatus('空き枠探索中');
 
-  const prevSnapshot=loadAvailabilitySnapshot();
-  let snapshotCurrent=null;
-  let snapshotFinal=null;
+  const prevAvailability=loadAvailabilityState();
+  let availabilityCurrent=null;
+  let availabilityFinal=null;
   const scheduleImmediateReload=(delay=120)=>{
     clearTimeout(Tm);
     const wait=Math.max(30,Number.isFinite(delay)?delay:120);
@@ -1188,44 +1218,78 @@ async function runCycle(){
     const calOK=await waitCalendarReady(5000);
     if(!calOK){ui.setStatus('再試行中');scheduleRetryOrNextMinute();return;}
 
-    snapshotCurrent=computeAvailabilitySnapshot(conf.dates);
-    if(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
+    availabilityCurrent=await captureAvailabilityState(conf.dates);
+    if(prevAvailability&&availabilityCurrent&&availabilityStatesEqual(prevAvailability,availabilityCurrent,conf.dates)){
       ui.setStatus('空き枠状況に変化なし（即再読込）');
-      snapshotFinal=snapshotCurrent;
+      availabilityFinal=availabilityCurrent;
       scheduleImmediateReload(45);
       return;
     }
 
-    // まず今見えている月で選択可否
-    const anySelectable=await hasSelectableDateForDates(conf.dates);
+    let anyEnabled=false;
+    let anyTimeAvailable=false;
+    if(availabilityCurrent){
+      for(const ds of conf.dates){
+        const entry=availabilityCurrent?.dates?.[ds];
+        if(!entry)continue;
+        if(entry.status==='enabled'){
+          anyEnabled=true;
+          if(Array.isArray(entry.timeKeys)&&entry.timeKeys.length){
+            anyTimeAvailable=true;
+            break;
+          }
+        }
+      }
+    }
 
-    if(!anySelectable){
-      ui.setStatus('空き枠なし（即再読込）');
-      snapshotFinal=snapshotCurrent;
-      scheduleImmediateReload(45);
-      return;
+    if(availabilityCurrent){
+      if(!anyEnabled){
+        ui.setStatus('空き枠なし（即再読込）');
+        availabilityFinal=availabilityCurrent;
+        scheduleImmediateReload(45);
+        return;
+      }
+      if(!anyTimeAvailable){
+        ui.setStatus('空き枠なし（即再読込）');
+        availabilityFinal=availabilityCurrent;
+        scheduleImmediateReload(45);
+        return;
+      }
+    }else{
+      const anySelectable=await hasSelectableDateForDates(conf.dates);
+      if(!anySelectable){
+        ui.setStatus('空き枠なし（即再読込）');
+        scheduleImmediateReload(45);
+        return;
+      }
     }
 
     // 予約試行
     for(const ds of conf.dates){
+      if(availabilityCurrent){
+        const entry=availabilityCurrent?.dates?.[ds];
+        if(!entry||entry.status!=='enabled'||!Array.isArray(entry.timeKeys)||!entry.timeKeys.length){
+          continue;
+        }
+      }
       ui.setStatus('予約試行中');
       const d=new Date(ds+'T00:00:00');
       const r=await tryOnceForDate(d);
-      if(r==='ok'){ui.setStatus('予約完了');stopOK();snapshotFinal=computeAvailabilitySnapshot(conf.dates);return;}
-      if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');snapshotFinal=computeAvailabilitySnapshot(conf.dates);return;}
+      if(r==='ok'){ui.setStatus('予約完了');stopOK();availabilityFinal=null;return;}
+      if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');availabilityFinal=null;return;}
       if(r==='ng'){ui.setStatus('再試行中');break}
     }
 
-    snapshotFinal=computeAvailabilitySnapshot(conf.dates);
+    availabilityFinal=await captureAvailabilityState(conf.dates).catch(()=>availabilityCurrent);
 
     ui.setStatus('再試行準備中');
     scheduleImmediateReload(45);
   }finally{
-    const snapToStore=snapshotFinal??snapshotCurrent??(conf.dates.length?computeAvailabilitySnapshot(conf.dates):null);
-    if(snapToStore){
-      saveAvailabilitySnapshot(snapToStore);
+    const stateToStore=availabilityFinal??availabilityCurrent;
+    if(stateToStore){
+      saveAvailabilityState(stateToStore);
     }else{
-      saveAvailabilitySnapshot(null);
+      saveAvailabilityState(null);
     }
   }
 }
