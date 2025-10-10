@@ -433,6 +433,41 @@ function isDateCellEnabled(cell){
   const ng=cell.querySelector('img[src*="calendar_ng.svg"], img[alt*="満員"]'); if(ng)return false;
   return true;
 }
+const AVAIL_SNAPSHOT_KEY='nr_last_availability_snapshot_v1';
+function loadAvailabilitySnapshot(){
+  try{
+    const val=sessionStorage.getItem(AVAIL_SNAPSHOT_KEY);
+    return val&&val.length?val:null;
+  }catch{return null}
+}
+function saveAvailabilitySnapshot(val){
+  try{
+    if(val&&val.length){
+      sessionStorage.setItem(AVAIL_SNAPSHOT_KEY,val);
+    }else{
+      sessionStorage.removeItem(AVAIL_SNAPSHOT_KEY);
+    }
+  }catch{}
+}
+function computeAvailabilitySnapshot(dates){
+  try{
+    if(!Array.isArray(dates)||!dates.length)return null;
+    const parts=[];
+    for(const iso of dates){
+      if(!iso){
+        parts.push('?:missing');
+        continue;
+      }
+      const cell=getCellByISO(iso);
+      let status='missing';
+      if(cell){
+        status=isDateCellEnabled(cell)?'enabled':'disabled';
+      }
+      parts.push(`${iso}:${status}`);
+    }
+    return parts.join('|');
+  }catch{return null}
+}
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
   const already=selectedDateISO();
@@ -1098,48 +1133,78 @@ async function runCycle(){
 
   ui.setStatus('空き枠探索中');
 
-  const calOK=await waitCalendarReady(5000);
-  if(!calOK){ui.setStatus('再試行中');return scheduleRetryOrNextMinute()}
+  const prevSnapshot=loadAvailabilitySnapshot();
+  let snapshotCurrent=null;
+  let snapshotFinal=null;
+  const scheduleImmediateReload=()=>{
+    clearTimeout(Tm);
+    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},200);
+  };
 
-  // まず今見えている月で選択可否
-  let anySelectable=false;
-  for(const ds of conf.dates){
-    const cell=getCellByISO(ds);
-    if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
-  }
+  try{
+    const calOK=await waitCalendarReady(5000);
+    if(!calOK){ui.setStatus('再試行中');scheduleRetryOrNextMinute();return;}
 
-  // 見えている月で不可なら、10月が対象に含まれる場合のみ次月へ送って再判定
-  if(!anySelectable){
-    const octoberList = conf.dates.filter(v=>/-10-/.test(v));
-    if(octoberList.length){
-      await showMonthForISO(octoberList[0]); // ★ここで必ずページめくり試行
-      anySelectable=false;
-      for(const ds of conf.dates){
-        const cell=getCellByISO(ds);
-        if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
+    // まず今見えている月で選択可否
+    let anySelectable=false;
+    for(const ds of conf.dates){
+      const cell=getCellByISO(ds);
+      if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
+    }
+
+    // 見えている月で不可なら、10月が対象に含まれる場合のみ次月へ送って再判定
+    if(!anySelectable){
+      const octoberList = conf.dates.filter(v=>/-10-/.test(v));
+      if(octoberList.length){
+        await showMonthForISO(octoberList[0]); // ★ここで必ずページめくり試行
+        anySelectable=false;
+        for(const ds of conf.dates){
+          const cell=getCellByISO(ds);
+          if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
+        }
       }
     }
-  }
 
-  if(!anySelectable){
-    ui.setStatus('再試行中');
-    return scheduleRetryOrNextMinute();
-  }
+    snapshotCurrent=computeAvailabilitySnapshot(conf.dates);
 
-  // 予約試行
-  for(const ds of conf.dates){
-    ui.setStatus('予約試行中');
-    const d=new Date(ds+'T00:00:00');
-    const r=await tryOnceForDate(d);
-    if(r==='ok'){ui.setStatus('予約完了');stopOK();return}
-    if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');return}
-    if(r==='ng'){ui.setStatus('再試行中');break}
-  }
+    if(anySelectable&&prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
+      ui.setStatus('空き状況に変化なし（即時リロード）');
+      snapshotFinal=snapshotCurrent;
+      scheduleImmediateReload();
+      return;
+    }
 
-  const d=delayUntilNextMinute_12s();
-  ui.setStatus('待機中');
-  clearTimeout(Tm);
-  Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+    if(!anySelectable){
+      ui.setStatus('再試行中');
+      snapshotFinal=snapshotCurrent;
+      scheduleRetryOrNextMinute();
+      return;
+    }
+
+    // 予約試行
+    for(const ds of conf.dates){
+      ui.setStatus('予約試行中');
+      const d=new Date(ds+'T00:00:00');
+      const r=await tryOnceForDate(d);
+      if(r==='ok'){ui.setStatus('予約完了');stopOK();snapshotFinal=computeAvailabilitySnapshot(conf.dates);return;}
+      if(r==='typeSelect'){resetFail();ui.setStatus('券種選択ページに移動しました');snapshotFinal=computeAvailabilitySnapshot(conf.dates);return;}
+      if(r==='ng'){ui.setStatus('再試行中');break}
+    }
+
+    snapshotFinal=computeAvailabilitySnapshot(conf.dates);
+
+    const d=delayUntilNextMinute_12s();
+    ui.setStatus('待機中');
+    clearTimeout(Tm);
+    Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
+  }finally{
+    const snapToStore=snapshotFinal??snapshotCurrent??(conf.dates.length?computeAvailabilitySnapshot(conf.dates):null);
+    if(snapToStore){
+      saveAvailabilitySnapshot(snapToStore);
+    }else{
+      saveAvailabilitySnapshot(null);
+    }
+  }
 }
 
 if(state.r&&!state.keepAlive)runCycle();
