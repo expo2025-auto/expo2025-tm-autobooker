@@ -1188,33 +1188,21 @@ async function runCycle(){
     const calOK=await waitCalendarReady(5000);
     if(!calOK){ui.setStatus('再試行中');scheduleRetryOrNextMinute();return;}
 
-    // まず今見えている月で選択可否
-    let anySelectable=await hasSelectableDateForDates(conf.dates);
-
     snapshotCurrent=computeAvailabilitySnapshot(conf.dates);
-
-    const fastMonitor=Boolean(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent);
-    if(fastMonitor){
-      ui.setStatus('空き枠探索中（高速確認）');
-    }else if(prevSnapshot&&snapshotCurrent){
-      ui.setStatus('空き状況の変化待ち');
-      const changedSnapshot=await waitAvailabilityChange(snapshotCurrent,conf.dates,6000);
-      if(changedSnapshot){
-        snapshotCurrent=changedSnapshot;
-        anySelectable=await hasSelectableDateForDates(conf.dates);
-      }
+    if(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
+      ui.setStatus('空き枠状況に変化なし（即再読込）');
+      snapshotFinal=snapshotCurrent;
+      scheduleImmediateReload(45);
+      return;
     }
 
+    // まず今見えている月で選択可否
+    const anySelectable=await hasSelectableDateForDates(conf.dates);
+
     if(!anySelectable){
-      if(fastMonitor){
-        ui.setStatus('空き枠なし（高速リロード）');
-        snapshotFinal=snapshotCurrent;
-        scheduleImmediateReload();
-        return;
-      }
-      ui.setStatus('再試行中');
+      ui.setStatus('空き枠なし（即再読込）');
       snapshotFinal=snapshotCurrent;
-      scheduleRetryOrNextMinute();
+      scheduleImmediateReload(45);
       return;
     }
 
@@ -1230,15 +1218,8 @@ async function runCycle(){
 
     snapshotFinal=computeAvailabilitySnapshot(conf.dates);
 
-    if(fastMonitor){
-      ui.setStatus('高速再試行待機');
-      scheduleImmediateReload();
-    }else{
-      const d=delayUntilNextMinute_12s();
-      ui.setStatus('待機中');
-      clearTimeout(Tm);
-      Tm=setTimeout(()=>{if(state.r){resetFail();safeReload()}},d);
-    }
+    ui.setStatus('再試行準備中');
+    scheduleImmediateReload(45);
   }finally{
     const snapToStore=snapshotFinal??snapshotCurrent??(conf.dates.length?computeAvailabilitySnapshot(conf.dates):null);
     if(snapToStore){
