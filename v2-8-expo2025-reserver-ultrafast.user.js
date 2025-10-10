@@ -472,6 +472,44 @@ function computeAvailabilitySnapshot(dates){
     return parts.join('|');
   }catch{return null}
 }
+async function hasSelectableDateForDates(dates){
+  if(!Array.isArray(dates)||!dates.length)return false;
+  const checkCurrentMonth=()=>{
+    for(const ds of dates){
+      const cell=getCellByISO(ds);
+      if(cell&&isDateCellEnabled(cell))return true;
+    }
+    return false;
+  };
+  if(checkCurrentMonth())return true;
+  const octoberList=dates.filter(v=>/-10-/.test(v));
+  if(!octoberList.length)return false;
+  await showMonthForISO(octoberList[0]);
+  return checkCurrentMonth();
+}
+async function waitAvailabilityChange(prevSnapshot,dates,timeout=6000){
+  if(!prevSnapshot||!Array.isArray(dates)||!dates.length)return null;
+  const root=getCalendarRoot();
+  return await new Promise(resolve=>{
+    const t0=Date.now();
+    let done=false;
+    const finish=val=>{if(done)return;done=true;try{mo.disconnect()}catch{};clearInterval(iv);resolve(val);};
+    const check=()=>{
+      const snap=computeAvailabilitySnapshot(dates);
+      if(snap&&snap!==prevSnapshot){
+        finish(snap);
+        return;
+      }
+      if(Date.now()-t0>=timeout){
+        finish(null);
+      }
+    };
+    const mo=new MutationObserver(check);
+    try{mo.observe(root,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style','aria-pressed','aria-disabled','aria-hidden','data-disabled']});}catch{}
+    const iv=setInterval(check,150);
+    check();
+  });
+}
 async function ensureDate(iso,timeout=8000){
   if(!iso)return false;
   const already=selectedDateISO();
@@ -1150,32 +1188,28 @@ async function runCycle(){
     if(!calOK){ui.setStatus('再試行中');scheduleRetryOrNextMinute();return;}
 
     // まず今見えている月で選択可否
-    let anySelectable=false;
-    for(const ds of conf.dates){
-      const cell=getCellByISO(ds);
-      if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
-    }
-
-    // 見えている月で不可なら、10月が対象に含まれる場合のみ次月へ送って再判定
-    if(!anySelectable){
-      const octoberList = conf.dates.filter(v=>/-10-/.test(v));
-      if(octoberList.length){
-        await showMonthForISO(octoberList[0]); // ★ここで必ずページめくり試行
-        anySelectable=false;
-        for(const ds of conf.dates){
-          const cell=getCellByISO(ds);
-          if(cell&&isDateCellEnabled(cell)){anySelectable=true;break}
-        }
-      }
-    }
+    let anySelectable=await hasSelectableDateForDates(conf.dates);
 
     snapshotCurrent=computeAvailabilitySnapshot(conf.dates);
 
-    if(anySelectable&&prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
-      ui.setStatus('空き状況に変化なし（即時リロード）');
-      snapshotFinal=snapshotCurrent;
-      scheduleImmediateReload();
-      return;
+    if(prevSnapshot&&snapshotCurrent&&prevSnapshot===snapshotCurrent){
+      ui.setStatus('空き状況の変化待ち');
+      const changedSnapshot=await waitAvailabilityChange(snapshotCurrent,conf.dates,6000);
+      if(changedSnapshot){
+        snapshotCurrent=changedSnapshot;
+        anySelectable=await hasSelectableDateForDates(conf.dates);
+      }else{
+        if(anySelectable){
+          ui.setStatus('空き状況に変化なし（即時リロード）');
+          snapshotFinal=snapshotCurrent;
+          scheduleImmediateReload();
+        }else{
+          ui.setStatus('再試行中');
+          snapshotFinal=snapshotCurrent;
+          scheduleRetryOrNextMinute();
+        }
+        return;
+      }
     }
 
     if(!anySelectable){
