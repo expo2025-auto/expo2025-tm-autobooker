@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         V.2.8Expo2025 来場予約（超高速版）
+// @name         V.3.0 Expo2025 来場予約（超高速版）
 // @namespace    http://tampermonkey.net/
 // @version      3.0-fast
 // @author       You
